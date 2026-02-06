@@ -1,0 +1,37 @@
+[package]
+name = "axum-oidc-client"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+tokio = { version = "1.41", features = ["full"] }
+reqwest = { version = "0.12.22", features = ["rustls-tls", "json"] }
+pkce-std = "0.2.1"
+serde_html_form = "0.2.7"
+axum-extra = { version = "0.10.0", features = [
+    "cookie",
+    "cookie-private",
+    "cookie-signed",
+] }
+axum = { version = "0.8.6", features = ["macros"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.140" }
+rand = { version = "0.9.1" }
+http = { version = "1.2.0" }
+futures-util = { version = "0.3.31" }
+tower = { version = "0.5.2" }
+
+urlencoding = "2.1"
+uuid = { version = "1.18.1", features = ["v4"] }
+time = "0.3.44"
+redis = { version = "1.0.0-rc.3", optional = true, features = ["tokio-comp", "connection-manager"]}
+moka = { version = "0.12.11", optional = true}
+chrono = {version = "0.4.42", features = ["serde"]}
+
+[features]
+# Defines a feature named `webp` that does not enable any other features.
+moka = ["dep:moka"]
+redis = ["dep:redis"]
+redis-native-tls= ["redis", "redis?/tokio-native-tls-comp"] #"tokio-native-tls-comp"
+redis-rustls = ["redis", "redis?/tokio-rustls-comp"] #"tokio-rustls-comp"

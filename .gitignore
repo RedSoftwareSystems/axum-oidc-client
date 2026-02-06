@@ -1,0 +1,51 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.staging
+.env.production
+.env.test
+.env.testing
+.env.prod
+.env.dev
+# Keep example files
+!.env.example
+!.env.sample
+!.env.*.example
+!.env.*.sample
+
+# Backup files
+*.bak
+*.backup
+
+# IDE and editor files
+.vscode/
+.idea/
+.zed/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+target/
+Cargo.lock
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+
+# OAuth2 credentials (extra safety)
+*credentials*.json
+*secret*.json
+*private*.key
+*secrets*
+# Don't ignore example credential files
+!*credentials*.example*
+!*secret*.example*
