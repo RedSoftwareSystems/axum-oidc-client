@@ -26,9 +26,12 @@ pub struct AccessTokenResponse {
     pub id_token: String,
     pub access_token: String,
     pub token_type: String,
-    pub expires_in: i64,
-    pub refresh_token: String,
-    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub expires_in: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub scope: Option<String>,
 }
 
 async fn get_auth_tokens(

@@ -17,7 +17,7 @@ use crate::{
 pub struct RefreshTokenResponse {
     pub access_token: String,
     pub token_type: String,
-    pub expires_in: i64,
+    pub expires_in: Option<i64>,
     pub refresh_token: Option<String>,
     pub scope: Option<String>,
     pub id_token: Option<String>,
@@ -29,9 +29,14 @@ pub async fn refresh_tokens(
     configuration: &OAuthConfiguration,
     session: &AuthSession,
 ) -> Result<RefreshTokenResponse, Error> {
+    let refresh_token = session
+        .refresh_token
+        .as_deref()
+        .ok_or_else(|| Error::MissingPatameter("refresh_token".to_owned()))?;
+
     let params = [
         ("grant_type", "refresh_token"),
-        ("refresh_token", &session.refresh_token),
+        ("refresh_token", refresh_token),
         ("client_id", &configuration.client_id),
     ];
 
@@ -80,7 +85,12 @@ pub async fn extract_and_refresh_session(
 
     // Check if the token is expired
     let now = Local::now();
-    if session.expires <= now {
+    if session.expires.map(|exp| exp <= now).unwrap_or(false) {
+        // If no refresh token is present, we cannot refresh — treat as expired
+        if session.refresh_token.is_none() {
+            return Err(Error::SessionExpired);
+        }
+
         // Token is expired, try to refresh it
         match refresh_tokens(client, config, &session).await {
             Ok(refresh_response) => {
@@ -90,7 +100,7 @@ pub async fn extract_and_refresh_session(
 
                 // Update refresh token if provided
                 if let Some(new_refresh_token) = refresh_response.refresh_token {
-                    session.refresh_token = new_refresh_token;
+                    session.refresh_token = Some(new_refresh_token);
                 }
 
                 // Update ID token if provided
@@ -100,12 +110,16 @@ pub async fn extract_and_refresh_session(
 
                 // Update scope if provided
                 if let Some(new_scope) = refresh_response.scope {
-                    session.scope = new_scope;
+                    session.scope = Some(new_scope);
                 }
 
-                // Calculate new expiration time
-                session.expires =
-                    calculate_token_expiration(refresh_response.expires_in, config.token_max_age);
+                // Calculate new expiration time — if both are absent, leave the
+                // existing value untouched so the session keeps whatever expiry it had
+                if let Some(new_expires) =
+                    calculate_token_expiration(refresh_response.expires_in, config.token_max_age)
+                {
+                    session.expires = Some(new_expires);
+                }
 
                 // Save the updated session back to cache
                 cache

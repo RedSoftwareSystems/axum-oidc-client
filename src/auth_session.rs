@@ -17,17 +17,19 @@ use serde::{Deserialize, Serialize};
 /// * `id_token` - OpenID Connect ID token (JWT) containing user identity claims
 /// * `access_token` - OAuth2 access token for API authorization
 /// * `token_type` - Token type, typically "Bearer"
-/// * `refresh_token` - Refresh token for obtaining new access tokens
+/// * `refresh_token` - Optional refresh token for obtaining new access tokens
 /// * `scope` - Space-separated list of granted scopes
-/// * `expires` - Expiration timestamp for the access token
+/// * `expires` - Optional expiration timestamp for the access token; `None` when neither
+///   `expires_in` nor `token_max_age` were available at session creation
 ///
 /// # Automatic Token Refresh
 ///
 /// When used as an extractor in route handlers, this session is automatically
 /// refreshed if the access token has expired. The refresh process:
 ///
-/// 1. Checks if `expires` is in the past
-/// 2. Uses `refresh_token` to request a new access token
+/// 1. Checks if `expires` is `Some` and in the past; if `expires` is `None` the
+///    refresh logic is skipped entirely (no expiry info was available)
+/// 2. Uses `refresh_token` to request a new access token (if present)
 /// 3. Updates `access_token`, `id_token`, and `expires` with fresh values
 /// 4. Persists the updated session to cache
 ///
@@ -38,14 +40,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// async fn protected_route(session: AuthSession) -> String {
 ///     // Session is automatically refreshed if expired
+///     let expires = session.expires
+///         .map(|e| e.to_string())
+///         .unwrap_or_else(|| "(no expiry)".to_string());
 ///     format!(
 ///         "Welcome! Your session:\n\
 ///          Token Type: {}\n\
 ///          Expires: {}\n\
 ///          Scopes: {}",
 ///         session.token_type,
-///         session.expires,
-///         session.scope
+///         expires,
+///         session.scope.as_deref().unwrap_or("(none)")
 ///     )
 /// }
 /// ```
@@ -102,12 +107,15 @@ pub struct AuthSession {
     pub access_token: String,
     /// Token type, typically "Bearer"
     pub token_type: String,
-    /// Refresh token for obtaining new access tokens when they expire
-    pub refresh_token: String,
+    /// Optional refresh token for obtaining new access tokens when they expire.
+    /// When absent, expired sessions cannot be refreshed and will require re-authentication.
+    pub refresh_token: Option<String>,
     /// Space-separated list of OAuth2 scopes granted to this session
-    pub scope: String,
-    /// Timestamp when the access token expires
-    pub expires: DateTime<Local>,
+    pub scope: Option<String>,
+    /// Optional expiration timestamp for the access token.
+    /// `None` means neither `expires_in` nor `token_max_age` were present at session
+    /// creation — in that case the token refresh logic is disabled entirely.
+    pub expires: Option<DateTime<Local>>,
 }
 
 impl AuthSession {

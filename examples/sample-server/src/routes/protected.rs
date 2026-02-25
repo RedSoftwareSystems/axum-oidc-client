@@ -51,8 +51,11 @@ use chrono::Local;
 pub async fn protected(session: AuthSession) -> Html<String> {
     let token_type = &session.token_type;
     let now = Local::now();
-    let expires = session.expires;
-    let scope = &session.scope;
+    let expires = session
+        .expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    let scope = session.scope.as_deref().unwrap_or("(none)");
     let access_token_session = &session.access_token;
     let id_token = &session.id_token;
 

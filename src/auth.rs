@@ -123,36 +123,42 @@ impl Display for CodeChallengeMethod {
 ///
 /// # Arguments
 ///
-/// * `expires_in` - Seconds until token expiration from the OAuth provider
-/// * `token_max_age` - Maximum allowed token age in seconds from configuration
+/// * `expires_in` - Optional seconds until token expiration from the OAuth provider
+/// * `token_max_age` - Optional maximum allowed token age in seconds from configuration
 ///
 /// # Returns
 ///
-/// The current time plus the calculated expiration duration.
-/// Returns the maximum of:
-/// - 1 second (minimum)
-/// - The maximum of (expires_in - 1) and token_max_age
+/// `None` when both `expires_in` and `token_max_age` are absent — in this case
+/// no expiry is tracked and the refresh logic is disabled.
+///
+/// Otherwise `Some(DateTime)` representing the current time plus the calculated
+/// expiration duration, which is at least 1 second and determined as follows:
+/// - Both present: `min(expires_in - 1, token_max_age)`
+/// - Only `expires_in`: `expires_in - 1`
+/// - Only `token_max_age`: `token_max_age`
 ///
 /// # Examples
 ///
 /// ```ignore
 /// // Token expires in 3600 seconds, max age is 1800
-/// let expiration = calculate_token_expiration(3600, 1800);
-/// // Uses 3599 seconds (expires_in - 1)
+/// let expiration = calculate_token_expiration(Some(3600), Some(1800));
+/// // Uses min(3599, 1800) = 1800 seconds
 ///
-/// // Token expires in 300 seconds, max age is 1800
-/// let expiration = calculate_token_expiration(300, 1800);
-/// // Uses 1800 seconds (token_max_age)
+/// // No expiry info at all — refresh is disabled
+/// let expiration = calculate_token_expiration(None, None);
+/// assert!(expiration.is_none());
 /// ```
 pub fn calculate_token_expiration(
-    expires_in: i64,
+    expires_in: Option<i64>,
     token_max_age: Option<i64>,
-) -> chrono::DateTime<Local> {
-    Local::now()
-        + Duration::seconds(std::cmp::max(
-            1,
-            std::cmp::min(expires_in - 1, token_max_age.unwrap_or(0)),
-        ))
+) -> Option<chrono::DateTime<Local>> {
+    let seconds = match (expires_in, token_max_age) {
+        (None, None) => return None,
+        (Some(exp), None) => std::cmp::max(1, exp - 1),
+        (None, Some(max_age)) => std::cmp::max(1, max_age),
+        (Some(exp), Some(max_age)) => std::cmp::max(1, std::cmp::min(exp - 1, max_age)),
+    };
+    Some(Local::now() + Duration::seconds(seconds))
 }
 
 impl AuthSession {
@@ -161,8 +167,8 @@ impl AuthSession {
             id_token: response.id_token.to_owned(),
             access_token: response.access_token.to_owned(),
             token_type: response.token_type.to_owned(),
-            refresh_token: response.refresh_token.to_owned(),
-            scope: response.scope.to_owned(),
+            refresh_token: response.refresh_token.clone(),
+            scope: response.scope.clone(),
             expires: calculate_token_expiration(response.expires_in, conf.token_max_age),
         }
     }
