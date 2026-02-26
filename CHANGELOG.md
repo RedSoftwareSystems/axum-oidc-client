@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.2] - 20260226
+
+### Changed
+
+- **Breaking**: Made `expires_in`, `refresh_token`, and `scope` optional in token response and session structs to comply with OAuth2/OIDC specifications
+  - `AccessTokenResponse`: `expires_in` is now `Option<i64>`, `refresh_token` is now `Option<String>`, `scope` is now `Option<String>`
+  - `RefreshTokenResponse`: `expires_in` is now `Option<i64>`
+  - `AuthSession`: `expires` is now `Option<DateTime<Local>>`, `refresh_token` is now `Option<String>`, `scope` is now `Option<String>`
+  - `calculate_token_expiration` now accepts `Option<i64>` for `expires_in` and returns `Option<DateTime<Local>>`; returns `None` when both `expires_in` and `token_max_age` are absent
+  - Token refresh logic is automatically disabled when `AuthSession.expires` is `None` (i.e. neither `expires_in` nor `token_max_age` were available at session creation)
+  - Token refresh logic is automatically skipped when `AuthSession.refresh_token` is `None`
+  - After a successful token refresh, `session.expires` is only updated if the refresh response provides new expiry information
+  - Updated sample protected route to gracefully display `"(no expiry)"` and `"(none)"` when optional fields are absent
+
+## [0.1.1] - 2026
 
 ### Added
 
@@ -72,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `examples/sample-server/src/config.rs`: Added clarifying comments for `end_session_endpoint`
   - `examples/sample-server/src/env.rs`: Updated environment variable documentation
 
-## [0.1.0] - 2024
+## [0.1.0] - 2026
 
 ### Added
 
