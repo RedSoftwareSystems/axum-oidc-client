@@ -1,6 +1,6 @@
 [package]
 name = "axum-oidc-client"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "OpenID Connect (OIDC) and OAuth2 client middleware for Axum web framework"
@@ -30,12 +30,12 @@ urlencoding = "2.1"
 uuid = { version = "1.18.1", features = ["v4"] }
 time = "0.3.44"
 redis = { version = "1.0.0-rc.3", optional = true, features = ["tokio-comp", "connection-manager"]}
-moka = { version = "0.12.11", optional = true}
+moka = { version = "0.12.11", optional = true, features = ["future"]}
 chrono = {version = "0.4.42", features = ["serde"]}
 
 [features]
-# Defines a feature named `webp` that does not enable any other features.
-moka = ["dep:moka"]
+default = ["moka-cache"]
+moka-cache = ["dep:moka"]
 redis = ["dep:redis"]
 redis-native-tls= ["redis", "redis?/tokio-native-tls-comp"] #"tokio-native-tls-comp"
 redis-rustls = ["redis", "redis?/tokio-rustls-comp"] #"tokio-rustls-comp"

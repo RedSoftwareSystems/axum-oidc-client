@@ -11,6 +11,23 @@ WATCH_DELAY = 1
 PORT ?= 8080
 HOST ?= 127.0.0.1
 
+# ── Cache feature selection ────────────────────────────────────────────────────
+# Select the cache backend at compile time via FEATURES.
+# Possible values:
+#   cache-l1      Moka in-process only (default, no Redis required)
+#   cache-l2      Redis only
+#   cache-l1-l2   Two-tier: Moka L1 in front of Redis L2
+#
+# Override on the command line:
+#   make run FEATURES=cache-l2
+#   make dev FEATURES=cache-l1-l2
+#
+FEATURES ?= cache-l1
+# Translate FEATURES into the cargo flag pair used by all targets below.
+CARGO_FEATURES = --no-default-features --features $(FEATURES)
+
+# ──────────────────────────────────────────────────────────────────────────────
+
 # Color output
 RED = \033[0;31m
 GREEN = \033[0;32m
@@ -24,38 +41,55 @@ help:
 	@echo -e "$(GREEN)Sample Server Development Commands$(NC)"
 	@echo ""
 	@echo -e "$(YELLOW)Setup:$(NC)"
-	@echo "  make install       - Install cargo-watch and dependencies"
-	@echo "  make setup         - Create .env.local from sample if it doesn't exist"
+	@echo "  make install         - Install cargo-watch and dependencies"
+	@echo "  make setup           - Create .env.local from sample if it doesn't exist"
 	@echo ""
-	@echo -e "$(YELLOW)Development:$(NC)"
-	@echo "  make dev           - Run with cargo-watch (auto-reload on changes)"
-	@echo "  make run           - Run without watching"
-	@echo "  make watch         - Alias for 'make dev'"
+	@echo -e "$(YELLOW)Development (generic – honours FEATURES variable):$(NC)"
+	@echo "  make dev             - Run with cargo-watch (auto-reload on changes)"
+	@echo "  make run             - Run without watching"
+	@echo "  make watch           - Alias for 'make dev'"
+	@echo ""
+	@echo -e "$(YELLOW)Cache-specific shortcuts:$(NC)"
+	@echo "  make run-l2          - Run with Redis-only cache        (cache-l2)"
+	@echo "  make run-l1          - Run with Moka in-process cache   (cache-l1, no Redis needed)"
+	@echo "  make run-l1-l2       - Run with two-tier cache          (cache-l1-l2)"
+	@echo "  make dev-l2          - Watch-run with Redis-only cache"
+	@echo "  make dev-l1          - Watch-run with Moka in-process cache"
+	@echo "  make dev-l1-l2       - Watch-run with two-tier cache"
+	@echo "  make build-l2        - Build with Redis-only cache"
+	@echo "  make build-l1        - Build with Moka in-process cache"
+	@echo "  make build-l1-l2     - Build with two-tier cache"
 	@echo ""
 	@echo -e "$(YELLOW)Build:$(NC)"
-	@echo "  make build         - Build in debug mode"
-	@echo "  make release       - Build in release mode"
-	@echo "  make clean         - Clean build artifacts"
+	@echo "  make build           - Build in debug mode (uses FEATURES=$(FEATURES))"
+	@echo "  make release         - Build in release mode"
+	@echo "  make clean           - Clean build artifacts"
 	@echo ""
 	@echo -e "$(YELLOW)Testing:$(NC)"
-	@echo "  make test          - Run tests"
-	@echo "  make test-watch    - Run tests with auto-reload"
+	@echo "  make test            - Run tests"
+	@echo "  make test-watch      - Run tests with auto-reload"
 	@echo ""
 	@echo -e "$(YELLOW)Utilities:$(NC)"
-	@echo "  make check         - Check code (cargo check)"
-	@echo "  make fmt           - Format code"
-	@echo "  make clippy        - Run clippy linter"
-	@echo "  make env           - Show current environment variables"
+	@echo "  make check           - Check code (cargo check)"
+	@echo "  make fmt             - Format code"
+	@echo "  make clippy          - Run clippy linter"
+	@echo "  make env             - Show current environment variables"
 	@echo ""
-	@echo -e "$(YELLOW)Environment:$(NC)"
-	@echo "  PORT=$(PORT) (override with PORT=3000 make dev)"
+	@echo -e "$(YELLOW)Environment / overrides:$(NC)"
+	@echo "  PORT=$(PORT)    (override with PORT=3000 make dev)"
 	@echo "  HOST=$(HOST) (override with HOST=0.0.0.0 make dev)"
-	@echo "  ENV_FILE=$(ENV_FILE) (override with DOTENV_FILE=.env.prod make dev)"
+	@echo "  FEATURES=$(FEATURES)  (override with FEATURES=cache-l2 make run)"
+	@echo "  ENV_FILE=$(ENV_FILE)  (override with DOTENV_FILE=.env.prod make dev)"
 	@echo ""
 	@echo -e "$(BLUE)Priority for .env files:$(NC)"
 	@echo "  1. DOTENV_FILE environment variable (if set)"
 	@echo "  2. .env.local (default)"
 	@echo "  3. .env (fallback)"
+	@echo ""
+	@echo -e "$(BLUE)Cache feature summary:$(NC)"
+	@echo "  cache-l1      Moka in-process only  (default, no external backend)"
+	@echo "  cache-l2      Redis only            (requires Redis)"
+	@echo "  cache-l1-l2   Moka L1 + Redis L2    (two-tier, requires Redis)"
 
 # Install cargo-watch if not already installed
 .PHONY: install
@@ -109,6 +143,7 @@ setup:
 dev: install setup
 	@echo -e "$(GREEN)Starting development server with hot-reloading...$(NC)"
 	@echo -e "$(BLUE)Configuration:$(NC)"
+	@echo "  • Cache feature:  $(FEATURES)"
 	@echo "  • Watching for file changes"
 	@echo "  • Debounce delay: $(WATCH_DELAY) second"
 	@echo "  • Environment file: $(ENV_FILE)"
@@ -131,11 +166,24 @@ dev: install setup
 			--ignore "*.log" \
 			--ignore "target/*" \
 			--why \
-			-x "run -- --host $(HOST) --port $(PORT)"; \
+			-x "run $(CARGO_FEATURES) -- --host $(HOST) --port $(PORT)"; \
 	else \
 		echo -e "$(RED)Error: $(ENV_FILE) not found. Run 'make setup' first.$(NC)"; \
 		exit 1; \
 	fi
+
+# ── Cache-specific dev targets ─────────────────────────────────────────────────
+.PHONY: dev-l2
+dev-l2:
+	@$(MAKE) dev FEATURES=cache-l2
+
+.PHONY: dev-l1
+dev-l1:
+	@$(MAKE) dev FEATURES=cache-l1
+
+.PHONY: dev-l1-l2
+dev-l1-l2:
+	@$(MAKE) dev FEATURES=cache-l1-l2
 
 # Alias for dev
 .PHONY: watch
@@ -144,28 +192,54 @@ watch: dev
 # Run without watching
 .PHONY: run
 run: setup
-	@echo -e "$(GREEN)Starting server...$(NC)"
+	@echo -e "$(GREEN)Starting server (cache: $(FEATURES))...$(NC)"
 	@if [ -n "$(DOTENV_FILE)" ]; then \
 		echo -e "$(BLUE)Using custom dotenv file: $(DOTENV_FILE)$(NC)"; \
 	fi
 	@if [ -f $(ENV_FILE) ]; then \
-		DOTENV_FILE=$(ENV_FILE) $(CARGO) run -- --host $(HOST) --port $(PORT); \
+		DOTENV_FILE=$(ENV_FILE) $(CARGO) run $(CARGO_FEATURES) -- --host $(HOST) --port $(PORT); \
 	else \
 		echo -e "$(RED)Error: $(ENV_FILE) not found. Run 'make setup' first.$(NC)"; \
 		exit 1; \
 	fi
 
+# ── Cache-specific run targets ─────────────────────────────────────────────────
+.PHONY: run-l2
+run-l2:
+	@$(MAKE) run FEATURES=cache-l2
+
+.PHONY: run-l1
+run-l1:
+	@$(MAKE) run FEATURES=cache-l1
+
+.PHONY: run-l1-l2
+run-l1-l2:
+	@$(MAKE) run FEATURES=cache-l1-l2
+
 # Build commands
 .PHONY: build
 build:
-	@echo -e "$(BLUE)Building in debug mode...$(NC)"
-	@$(CARGO) build
+	@echo -e "$(BLUE)Building in debug mode (cache: $(FEATURES))...$(NC)"
+	@$(CARGO) build $(CARGO_FEATURES)
 	@echo -e "$(GREEN)✓ Build complete$(NC)"
+
+# ── Cache-specific build targets ───────────────────────────────────────────────
+.PHONY: build-l2
+build-l2:
+	@$(MAKE) build FEATURES=cache-l2
+
+.PHONY: build-l1
+build-l1:
+	@$(MAKE) build FEATURES=cache-l1
+
+.PHONY: build-l1-l2
+build-l1-l2:
+	@$(MAKE) build FEATURES=cache-l1-l2
 
 .PHONY: release
 release:
-	@echo -e "$(BLUE)Building in release mode...$(NC)"
-	@$(CARGO) build --release
+	@echo -e "$(BLUE)Building in release mode (cache: $(FEATURES))...$(NC)"
+	@$(CARGO) build --release $(CARGO_FEATURES)
 	@echo -e "$(GREEN)✓ Release build complete$(NC)"
 
 .PHONY: clean
@@ -194,8 +268,8 @@ test-watch: install
 # Code quality
 .PHONY: check
 check:
-	@echo -e "$(BLUE)Running cargo check...$(NC)"
-	@$(CARGO) check
+	@echo -e "$(BLUE)Running cargo check (cache: $(FEATURES))...$(NC)"
+	@$(CARGO) check $(CARGO_FEATURES)
 	@echo -e "$(GREEN)✓ Check complete$(NC)"
 
 .PHONY: fmt
@@ -206,8 +280,8 @@ fmt:
 
 .PHONY: clippy
 clippy:
-	@echo -e "$(BLUE)Running clippy...$(NC)"
-	@$(CARGO) clippy -- -D warnings
+	@echo -e "$(BLUE)Running clippy (cache: $(FEATURES))...$(NC)"
+	@$(CARGO) clippy $(CARGO_FEATURES) -- -D warnings
 	@echo -e "$(GREEN)✓ Clippy complete$(NC)"
 
 # Show environment variables

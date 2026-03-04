@@ -48,8 +48,8 @@
 //!     // ID token and access token are automatically refreshed if expired
 //!     format!(
 //!         "Welcome! Your token expires at: {}\nScopes: {}",
-//!         session.expires,
-//!         session.scope
+//!         session.expires.map(|e| e.to_string()).unwrap_or_else(|| "(no expiry)".to_string()),
+//!         session.scope.as_deref().unwrap_or("(none)")
 //!     )
 //! }
 //! ```
@@ -61,8 +61,9 @@
 //!
 //! async fn api_call(token: AccessToken) -> String {
 //!     // Access token is automatically refreshed if expired
-//!     // Access the token string with *token
-//!     format!("Making API call with token: {}", &*token[..20])
+//!     // Access the token string with *token (safely truncated to 20 chars)
+//!     let prefix: String = token.chars().take(20).collect();
+//!     format!("Making API call with token: {}", prefix)
 //! }
 //! ```
 //!

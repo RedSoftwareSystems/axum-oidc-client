@@ -3,8 +3,20 @@
 //! This module handles:
 //! - CLI argument parsing using clap
 //! - OAuth2 configuration building
+//! - Cache configuration (feature-gated)
 //! - Environment variable integration
 //! - Configuration validation and display
+//!
+//! ## Cache feature flags
+//!
+//! The active cache feature controls which CLI arguments and environment
+//! variables are available:
+//!
+//! | Feature       | Extra args                                              |
+//! |---------------|---------------------------------------------------------|
+//! | `cache-l2`    | `--redis-url`, `--cache-ttl`                            |
+//! | `cache-l1`    | `--l1-max-capacity`, `--l1-ttl-sec`, `--l1-tti-sec`     |
+//! | `cache-l1-l2` | all of the above                                        |
 
 use axum_oidc_client::{
     auth::{CodeChallengeMethod, OAuthConfiguration},
@@ -124,6 +136,74 @@ pub struct Args {
     /// Server port
     #[arg(short, long, env = "SERVER_PORT", default_value = "8080")]
     pub port: u16,
+
+    // ── L2 cache (Redis) args ─────────────────────────────────────────────────
+    /// Redis connection URL.
+    ///
+    /// Used when the `cache-l2` or `cache-l1-l2` feature is enabled.
+    #[cfg(feature = "cache-l2")]
+    #[arg(
+        long,
+        env = "REDIS_URL",
+        default_value = "redis://127.0.0.1/",
+        help = "Redis connection URL [cache-l2 / cache-l1-l2]"
+    )]
+    pub redis_url: String,
+
+    /// Time-to-live for Redis cache entries (seconds).
+    ///
+    /// Used when the `cache-l2` or `cache-l1-l2` feature is enabled.
+    #[cfg(feature = "cache-l2")]
+    #[arg(
+        long,
+        env = "CACHE_TTL",
+        default_value = "3600",
+        help = "Redis cache TTL in seconds [cache-l2 / cache-l1-l2]"
+    )]
+    pub cache_ttl: u64,
+
+    // ── L1 cache (Moka) args ──────────────────────────────────────────────────
+    /// Maximum number of entries held by the Moka L1 cache.
+    ///
+    /// Used when the `cache-l1` or `cache-l1-l2` feature is enabled.
+    #[cfg(feature = "cache-l1")]
+    #[arg(
+        long,
+        env = "L1_MAX_CAPACITY",
+        default_value = "10000",
+        help = "Moka L1 cache max capacity (entries) [cache-l1 / cache-l1-l2]"
+    )]
+    pub l1_max_capacity: u64,
+
+    /// Time-to-live for Moka L1 cache entries (seconds).
+    ///
+    /// Should match or slightly exceed the L2 TTL so that stale L1 hits never
+    /// shadow a fresher L2 entry for too long.
+    ///
+    /// Used when the `cache-l1` or `cache-l1-l2` feature is enabled.
+    #[cfg(feature = "cache-l1")]
+    #[arg(
+        long,
+        env = "L1_TTL_SEC",
+        default_value = "3600",
+        help = "Moka L1 cache TTL in seconds [cache-l1 / cache-l1-l2]"
+    )]
+    pub l1_ttl_sec: u64,
+
+    /// Time-to-idle for Moka L1 cache entries (seconds).
+    ///
+    /// When set, entries that have not been accessed for this duration are
+    /// evicted even if their TTL has not expired yet.  Leave unset to
+    /// disable idle-based eviction.
+    ///
+    /// Used when the `cache-l1` or `cache-l1-l2` feature is enabled.
+    #[cfg(feature = "cache-l1")]
+    #[arg(
+        long,
+        env = "L1_TIME_TO_IDLE_SEC",
+        help = "Moka L1 cache time-to-idle in seconds (optional) [cache-l1 / cache-l1-l2]"
+    )]
+    pub l1_time_to_idle_sec: Option<u64>,
 }
 
 /// Parse a code challenge method from a string.
@@ -271,5 +351,43 @@ impl Args {
         println!("  - Redirect URI: {}", self.redirect_uri);
         println!("  - Base Path: {}", self.base_path);
         println!("  - Scopes: {:?}", self.scopes);
+        self.print_cache_config();
+    }
+
+    /// Print the active cache configuration to stdout.
+    ///
+    /// The output is controlled by the active cache feature flag:
+    ///
+    /// - `cache-l1-l2` → Two-tier (Moka L1 + Redis L2) with all settings
+    /// - `cache-l1`    → L1-only (Moka) with L1 settings
+    /// - `cache-l2`    → L2-only (Redis) with Redis settings
+    pub fn print_cache_config(&self) {
+        // ── Mode banner ───────────────────────────────────────────────────────
+        #[cfg(all(feature = "cache-l1", feature = "cache-l2"))]
+        println!("\n🗄️  Cache: Two-tier (Moka L1 + Redis L2)");
+
+        #[cfg(all(feature = "cache-l1", not(feature = "cache-l2")))]
+        println!("\n🗄️  Cache: L1-only (Moka in-process, no external backend)");
+
+        #[cfg(all(feature = "cache-l2", not(feature = "cache-l1")))]
+        println!("\n🗄️  Cache: L2-only (Redis)");
+
+        // ── L2 (Redis) settings ───────────────────────────────────────────────
+        #[cfg(feature = "cache-l2")]
+        {
+            println!("  - Redis URL: {}", self.redis_url);
+            println!("  - Cache TTL: {}s", self.cache_ttl);
+        }
+
+        // ── L1 (Moka) settings ────────────────────────────────────────────────
+        #[cfg(feature = "cache-l1")]
+        {
+            println!("  - L1 Max Capacity: {} entries", self.l1_max_capacity);
+            println!("  - L1 TTL: {}s", self.l1_ttl_sec);
+            match self.l1_time_to_idle_sec {
+                Some(tti) => println!("  - L1 Time-to-Idle: {}s", tti),
+                None => println!("  - L1 Time-to-Idle: disabled"),
+            }
+        }
     }
 }

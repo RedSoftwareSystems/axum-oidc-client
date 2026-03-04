@@ -3,6 +3,33 @@ name = "axum-sample-server"
 version = "0.1.0"
 edition = "2021"
 
+# ─── Cache feature flags ──────────────────────────────────────────────────────
+#
+# Exactly one of the three cache features should be enabled at a time.
+# Enabling multiple explicit features (e.g. cache-l1 + cache-l2) is equivalent
+# to enabling cache-l1-l2 and will compile the two-tier implementation.
+#
+#   cargo run                                  # default: cache-l1 (Moka in-process only)
+#   cargo run --no-default-features \
+#             --features cache-l1             # Moka in-process only
+#   cargo run --no-default-features \
+#             --features cache-l2             # Redis only
+#   cargo run --no-default-features \
+#             --features cache-l1-l2          # Moka L1 + Redis L2
+#
+[features]
+## L2-only: Redis-backed session cache with no in-process layer.
+cache-l2 = ["axum-oidc-client/redis-rustls"]
+
+## L1-only: Moka in-process cache.  No external backend required.
+cache-l1 = ["axum-oidc-client/moka-cache"]
+
+## Two-tier: Moka L1 in front of Redis L2.
+cache-l1-l2 = ["cache-l1", "cache-l2"]
+
+## Default: Moka in-process cache — no external backend required.
+default = ["cache-l1"]
+
 [dependencies]
 axum = "0.8.4"
 axum-extra = { version = "0.10.0", features = [
@@ -18,7 +45,9 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4", features = ["serde"] }
-axum-oidc-client = { path = "../.." , features=["redis-rustls"]}
+# Cache features are activated transitively through this crate's own features
+# (see the [features] section above); do NOT hard-code them here.
+axum-oidc-client = { path = "../.." }
 clap = { version = "4.5.51", features = ["derive", "env"] }
 clap_derive = "4.5.49"
 dotenv = "0.15"

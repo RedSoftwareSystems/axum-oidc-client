@@ -5,7 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.2] - 20260226
+## [0.2.0] - 2026-03-04
+
+### Added
+
+- **Feature**: Two-tier authentication cache (`cache` module, requires `moka-cache` feature)
+  - Introduced `TwoTierAuthCache`: combines a fast in-process [Moka](https://crates.io/crates/moka) L1 cache with any `AuthCache` implementation as the L2 backend (e.g. Redis)
+  - Implements a cache-aside pattern: reads check L1 first; on miss, L2 is queried and the result is promoted to L1; writes and invalidations are applied to both tiers
+  - `TwoTierCacheConfig` struct to tune L1 behaviour:
+    - `l1_max_capacity`: maximum number of entries (default `10_000`)
+    - `l1_ttl_sec`: time-to-live per entry in seconds (default `3600`)
+    - `l1_time_to_idle_sec`: optional idle-eviction timeout (default `None`)
+    - `enable_l1`: bypass Moka entirely when set to `false` (useful for testing)
+  - L2 backend is optional: the cache can operate in L1-only mode (no L2) or L2-only mode (L1 disabled)
+  - Comprehensive unit-test suite covering all combinations of L1-only, L2-only and two-tier modes
+  - Public API exposed via `axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig}`
+
+### Changed
+
+- **Cargo features**: renamed the `moka` feature to `moka-cache` to better reflect its purpose and avoid a name collision with the `moka` dependency; `moka-cache` is now a **default feature**
+- **Dependency**: enabled the `future` feature of the `moka` crate to support async cache operations
+- **Documentation** (`src/lib.rs`): documented the new `cache` module and `moka-cache` feature in the crate-level rustdoc
+
+## [0.1.2] - 2026-02-26
 
 ### Changed
 
