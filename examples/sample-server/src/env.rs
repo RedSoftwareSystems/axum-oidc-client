@@ -13,6 +13,18 @@
 //! 3. `.env` (for shared defaults)
 //!
 //! Only the first file found is loaded.
+//!
+//! # Cache-related environment variables
+//!
+//! Additional variables are recognised depending on the active cache feature:
+//!
+//! | Variable            | Feature               | Description                          |
+//! |---------------------|-----------------------|--------------------------------------|
+//! | `REDIS_URL`         | `cache-l2`/`cache-l1-l2` | Redis connection URL              |
+//! | `CACHE_TTL`         | `cache-l2`/`cache-l1-l2` | Redis entry TTL in seconds        |
+//! | `L1_MAX_CAPACITY`   | `cache-l1`/`cache-l1-l2` | Moka max entries                  |
+//! | `L1_TTL_SEC`        | `cache-l1`/`cache-l1-l2` | Moka entry TTL in seconds         |
+//! | `L1_TIME_TO_IDLE_SEC` | `cache-l1`/`cache-l1-l2` | Moka idle-eviction timeout      |
 
 use std::{env, path::PathBuf};
 
@@ -40,6 +52,13 @@ use std::{env, path::PathBuf};
 /// Server Configuration:
 /// - `SERVER_HOST`
 /// - `SERVER_PORT`
+///
+/// Cache Configuration (feature-gated):
+/// - `REDIS_URL` *(cache-l2 / cache-l1-l2)*
+/// - `CACHE_TTL` *(cache-l2 / cache-l1-l2)*
+/// - `L1_MAX_CAPACITY` *(cache-l1 / cache-l1-l2)*
+/// - `L1_TTL_SEC` *(cache-l1 / cache-l1-l2)*
+/// - `L1_TIME_TO_IDLE_SEC` *(cache-l1 / cache-l1-l2)*
 ///
 /// # Returns
 ///
@@ -98,6 +117,31 @@ pub fn check_env_sources() -> Vec<String> {
     }
     if env::var("SERVER_PORT").is_ok() {
         sources.push("SERVER_PORT".to_string());
+    }
+
+    // ── Cache: L2 (Redis) ─────────────────────────────────────────────────────
+    #[cfg(feature = "cache-l2")]
+    {
+        if env::var("REDIS_URL").is_ok() {
+            sources.push("REDIS_URL".to_string());
+        }
+        if env::var("CACHE_TTL").is_ok() {
+            sources.push("CACHE_TTL".to_string());
+        }
+    }
+
+    // ── Cache: L1 (Moka) ─────────────────────────────────────────────────────
+    #[cfg(feature = "cache-l1")]
+    {
+        if env::var("L1_MAX_CAPACITY").is_ok() {
+            sources.push("L1_MAX_CAPACITY".to_string());
+        }
+        if env::var("L1_TTL_SEC").is_ok() {
+            sources.push("L1_TTL_SEC".to_string());
+        }
+        if env::var("L1_TIME_TO_IDLE_SEC").is_ok() {
+            sources.push("L1_TIME_TO_IDLE_SEC".to_string());
+        }
     }
 
     sources

@@ -8,9 +8,35 @@
 //! - OAuth2/OIDC authentication with PKCE (Proof Key for Code Exchange)
 //! - Flexible configuration via CLI arguments or environment variables
 //! - Support for dotenv files (`.env`, `.env.local`, or custom via `DOTENV_FILE`)
-//! - Redis-based session caching
+//! - Feature-selectable cache backends (Redis L2, Moka L1, or two-tier)
 //! - Protected and public routes
 //! - Configurable logout handlers (default or OIDC)
+//!
+//! ## Cache Feature Flags
+//!
+//! The cache backend is selected at **compile time** via Cargo feature flags:
+//!
+//! | Feature       | Cache type                    | External dependency |
+//! |---------------|-------------------------------|---------------------|
+//! | `cache-l1`    | Moka in-process only *(default)* | None             |
+//! | `cache-l2`    | Redis only                    | Redis server        |
+//! | `cache-l1-l2` | Moka L1 + Redis L2 (two-tier) | Redis server        |
+//!
+//! ### Selecting a cache backend
+//!
+//! ```bash
+//! # Default: Moka in-process only (no external backend required)
+//! cargo run
+//!
+//! # Explicit Moka in-process only
+//! cargo run --no-default-features --features cache-l1
+//!
+//! # Redis only
+//! cargo run --no-default-features --features cache-l2
+//!
+//! # Two-tier: Moka L1 in front of Redis L2
+//! cargo run --no-default-features --features cache-l1-l2
+//! ```
 //!
 //! ## Usage
 //!
@@ -65,55 +91,24 @@
 //!
 //! ## Modules
 //!
+//! - [`cache`]  - Feature-gated cache construction
 //! - [`config`] - Configuration and CLI argument handling
-//! - [`env`] - Environment variable loading and management
+//! - [`env`]    - Environment variable loading and management
 //! - [`routes`] - Application route handlers
 
 use axum::{routing::get, Router};
 
 use axum_oidc_client::{
     auth::{AuthLayer, LogoutHandler},
-    auth_cache::AuthCache,
     logout::{handle_default_logout::DefaultLogoutHandler, handle_oidc_logout::OidcLogoutHandler},
 };
 use clap::Parser;
 use std::{net::SocketAddr, sync::Arc};
 
+mod cache;
 mod config;
 mod env;
 mod routes;
-
-/// Create a Redis-based authentication cache.
-///
-/// This function initializes a Redis cache for storing authentication state,
-/// session data, and tokens.
-///
-/// # Configuration
-///
-/// - **Redis URL**: `redis://127.0.0.1/` (default Redis instance)
-/// - **TTL**: 3600 seconds (1 hour)
-///
-/// # Returns
-///
-/// An `Arc` containing a thread-safe, sendable cache implementation.
-///
-/// # Examples
-///
-/// ```no_run
-/// # use axum_oidc_client::auth_cache::AuthCache;
-/// # use std::sync::Arc;
-/// # fn create_redis_cache() -> Arc<dyn AuthCache + Send + Sync> {
-/// #     use axum_oidc_client::redis;
-/// #     Arc::new(redis::AuthCache::new("redis://127.0.0.1/", 3600))
-/// # }
-/// let cache = create_redis_cache();
-/// // Use cache with AuthLayer
-/// ```
-fn create_redis_cache() -> Arc<dyn AuthCache + Send + Sync> {
-    use axum_oidc_client::redis;
-
-    Arc::new(redis::AuthCache::new("redis://127.0.0.1/", 3600))
-}
 
 /// Main application entry point.
 ///
@@ -121,52 +116,65 @@ fn create_redis_cache() -> Arc<dyn AuthCache + Send + Sync> {
 /// 1. Loads environment variables from dotenv files
 /// 2. Parses command-line arguments and environment variables
 /// 3. Builds OAuth2 configuration
-/// 4. Initializes Redis cache for session storage
-/// 5. Sets up logout handler (OIDC or default)
-/// 6. Creates Axum router with authentication middleware
+/// 4. Initializes the auth cache (backend selected by active cargo feature)
+/// 5. Sets up the logout handler (OIDC or default)
+/// 6. Creates the Axum router with the authentication middleware
 /// 7. Starts the HTTP server
+///
+/// # Cache selection
+///
+/// The cache backend is chosen at compile time:
+///
+/// - **`cache-l1`** *(default)* – Moka in-process cache; no external backend required.
+/// - **`cache-l2`** – Redis only.
+/// - **`cache-l1-l2`** – Two-tier: Moka L1 in front of Redis L2.
 ///
 /// # Panics
 ///
 /// This function will panic if:
 /// - OAuth configuration cannot be built
+/// - The cache cannot be initialised (e.g. invalid Redis URL)
 /// - Socket address cannot be parsed
 /// - Server fails to bind to the specified address
-/// - Server fails to start
 #[tokio::main]
 async fn main() {
-    // Load environment variables from dotenv files
+    // Load environment variables from dotenv files.
     // Priority: DOTENV_FILE env var > .env.local > .env
     let using_dotenv = env::load_dotenv();
 
-    // Parse command-line arguments (will use env vars from .env as fallbacks)
+    // Parse command-line arguments (env vars from the dotenv file are already
+    // available as fallbacks at this point).
     let args = config::Args::parse();
 
-    // Check which settings are from environment variables
+    // Record which settings came from environment variables so we can report
+    // them to the operator in the startup banner.
     let from_env = env::check_env_sources();
 
-    // Build OAuth configuration from CLI arguments
+    // Build the OAuth2 / OIDC configuration from the parsed arguments.
     let config = args
         .build_oauth_config()
         .expect("Failed to build OAuth configuration");
 
-    let cache = create_redis_cache();
+    // Build the auth cache.  The concrete implementation is chosen at compile
+    // time by the active cache feature flag (cache-l2 / cache-l1 / cache-l1-l2).
+    let cache = cache::build_cache(&args);
+
     let config_arc = Arc::new(config);
 
-    // Select appropriate logout handler based on configuration
+    // Select the appropriate logout handler based on configuration.
     let logout_handler: Arc<dyn LogoutHandler> = match config_arc.end_session_endpoint.as_ref() {
         Some(end_session_endpoint) => Arc::new(OidcLogoutHandler::new(end_session_endpoint)),
         None => Arc::new(DefaultLogoutHandler),
     };
 
-    // Build application with routes and authentication layer
+    // Build the application router with authentication middleware.
     let app = Router::new()
         .route("/", get(routes::home::home))
         .route("/home", get(routes::home::home))
         .route("/protected", get(routes::protected::protected))
         .layer(AuthLayer::new(config_arc, cache, logout_handler));
 
-    // Define the address to bind to from CLI arguments
+    // Resolve the bind address from CLI arguments.
     let addr: SocketAddr = format!("{host}:{port}", host = args.host, port = args.port)
         .parse()
         .expect("Failed to parse socket address");
@@ -177,17 +185,17 @@ async fn main() {
         port = args.port
     );
     println!("Routes:");
-    println!("  - GET /         (home)");
-    println!("  - GET /home     (home)");
+    println!("  - GET /          (home – public)");
+    println!("  - GET /home      (home – public)");
     println!("  - GET /protected (protected route)");
-    println!("  - GET /auth/logout (logout and redirect to home)");
-    println!("  - GET /auth/logout?redirect=/path (logout and redirect to custom path)");
+    println!("  - GET /auth/logout                    (logout → home)");
+    println!("  - GET /auth/logout?redirect=/path     (logout → custom path)");
 
-    // Display configuration information
+    // Display the full configuration including the active cache backend.
     args.print_config();
     env::print_config_sources(&from_env, using_dotenv.as_ref());
 
-    // Create and run the server
+    // Start the server.
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("Failed to bind to address");

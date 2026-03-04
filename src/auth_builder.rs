@@ -17,6 +17,7 @@
 //!     .with_redirect_uri("http://localhost:8080/auth/callback")
 //!     .with_private_cookie_key("your-secret-key-at-least-32-bytes")
 //!     .with_scopes(vec!["openid", "email", "profile"])
+//!     .with_post_logout_redirect_uri("/")
 //!     .with_session_max_age(30) // 30 minutes
 //!     .with_token_max_age(5)    // 5 minutes
 //!     .build()?;
@@ -99,6 +100,8 @@ impl Display for Scopes {
 ///     .with_authorization_endpoint("https://provider.com/oauth/authorize")
 ///     .with_token_endpoint("https://provider.com/oauth/token")
 ///     .with_private_cookie_key("secret-key-min-32-bytes-long")
+///     .with_post_logout_redirect_uri("/")
+///     .with_session_max_age(30)
 ///     .with_code_challenge_method(CodeChallengeMethod::S256)
 ///     .build()?;
 /// # Ok(())

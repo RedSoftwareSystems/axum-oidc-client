@@ -1,4 +1,5 @@
 use axum::response::IntoResponse;
+use std::fmt;
 
 #[cfg(feature = "redis")]
 use redis::RedisError;
@@ -149,6 +150,50 @@ impl Error {
             axum::http::StatusCode::BAD_GATEWAY => Error::BadGateway(response_text),
             axum::http::StatusCode::SERVICE_UNAVAILABLE => Error::ServiceUnavailable(response_text),
             _ => Error::UnknownStatusCode(status.as_u16(), response_text),
+        }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::MissingCodeVerifier => write!(f, "Missing code verifier"),
+            Error::MissingPatameter(p) => write!(f, "Missing parameter: {p}"),
+            Error::NotValidUri(u) => write!(f, "Not a valid URI: {u}"),
+            Error::Request(e) => write!(f, "Reqwest error: {e}"),
+            Error::InvalidCodeResponse(e) => write!(f, "Invalid code response: {e}"),
+            Error::InvalidTokenResponse(e) => write!(f, "Invalid token response: {e}"),
+            Error::InvalidResponse(r) => write!(f, "Invalid response: {r}"),
+            Error::CacheError(e) => write!(f, "Cache error: {e}"),
+            Error::TokenRefreshFailed(e) => write!(f, "Token refresh failed: {e}"),
+            Error::BadRequest(m) => write!(f, "Bad request: {m}"),
+            Error::Unauthorized(m) => write!(f, "Unauthorized: {m}"),
+            Error::Forbidden(m) => write!(f, "Forbidden: {m}"),
+            Error::NotFound(m) => write!(f, "Not found: {m}"),
+            Error::TooManyRequests(m) => write!(f, "Too many requests: {m}"),
+            Error::InternalServerError(m) => write!(f, "Internal server error: {m}"),
+            Error::BadGateway(m) => write!(f, "Bad gateway: {m}"),
+            Error::ServiceUnavailable(m) => write!(f, "Service unavailable: {m}"),
+            Error::UnknownStatusCode(code, m) => write!(f, "HTTP {code}: {m}"),
+            Error::AuthCacheNotConfigured => write!(f, "AuthCache not configured"),
+            Error::OAuthConfigNotConfigured => write!(f, "OAuthConfiguration not configured"),
+            Error::HttpClientNotConfigured => write!(f, "HTTP Client not configured"),
+            Error::SessionNotFound => write!(f, "No active session found"),
+            Error::SessionExpired => write!(f, "Session expired or not found"),
+            Error::CacheAccessError(m) => write!(f, "Cache error: {m}"),
+            Error::SessionUpdateFailed(m) => write!(f, "Failed to update session in cache: {m}"),
+            Error::TokenRefreshFailedAuth(m) => write!(f, "Token expired and refresh failed: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Request(e) => Some(e),
+            Error::InvalidCodeResponse(e) => Some(e),
+            Error::InvalidTokenResponse(e) => Some(e),
+            _ => None,
         }
     }
 }

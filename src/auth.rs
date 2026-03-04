@@ -18,6 +18,8 @@
 //!     auth::{AuthLayer, CodeChallengeMethod},
 //!     auth_builder::OAuthConfigurationBuilder,
 //!     auth_cache::AuthCache,
+//!     // `TwoTierAuthCache` requires the `moka-cache` feature (enabled by default).
+//!     cache::{TwoTierAuthCache, config::TwoTierCacheConfig},
 //!     logout::handle_default_logout::DefaultLogoutHandler,
 //! };
 //! use std::sync::Arc;
@@ -31,16 +33,19 @@
 //!     .with_redirect_uri("http://localhost:8080/auth/callback")
 //!     .with_private_cookie_key("secret-key")
 //!     .with_scopes(vec!["openid", "email"])
+//!     .with_post_logout_redirect_uri("/")
+//!     .with_session_max_age(3600)
 //!     .build()?;
 //!
-//! # #[cfg(feature = "redis")]
+//! // Create an L1-only in-memory cache (requires the `moka-cache` feature).
+//! // For Redis, enable the `redis` feature and use `axum_oidc_client::redis::AuthCache`.
 //! let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
-//!     axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600)
+//!     TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?
 //! );
 //!
 //! let logout_handler = Arc::new(DefaultLogoutHandler);
 //!
-//! let app = Router::new()
+//! let app: Router<()> = Router::new()
 //!     .route("/", get(|| async { "Hello!" }))
 //!     .layer(AuthLayer::new(Arc::new(config), cache, logout_handler));
 //! # Ok(())
@@ -220,6 +225,8 @@ impl From<CodeChallengeMethod> for Method {
 ///     .with_redirect_uri("http://localhost:8080/auth/callback")
 ///     .with_private_cookie_key("secret-key-at-least-32-bytes")
 ///     .with_scopes(vec!["openid", "email", "profile"])
+///     .with_post_logout_redirect_uri("/")
+///     .with_session_max_age(30)
 ///     .build()?;
 /// # Ok(())
 /// # }

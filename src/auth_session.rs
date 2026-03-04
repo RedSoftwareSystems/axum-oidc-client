@@ -92,7 +92,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// async fn check_session(session: AuthSession) -> String {
 ///     let now = Local::now();
-///     let is_expired = session.expires <= now;
+///     let is_expired = session.expires.map(|exp| exp <= now).unwrap_or(false);
 ///
 ///     // Note: When using the extractor, tokens are auto-refreshed
 ///     // so is_expired will typically be false

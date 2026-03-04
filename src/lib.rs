@@ -21,6 +21,8 @@
 //!     auth::{AuthLayer, CodeChallengeMethod},
 //!     auth_builder::OAuthConfigurationBuilder,
 //!     auth_cache::AuthCache,
+//!     // `TwoTierAuthCache` requires the `moka-cache` feature (enabled by default).
+//!     cache::{TwoTierAuthCache, config::TwoTierCacheConfig},
 //!     logout::handle_default_logout::DefaultLogoutHandler,
 //! };
 //! use std::sync::Arc;
@@ -36,19 +38,21 @@
 //!     .with_private_cookie_key("your-secret-key")
 //!     .with_scopes(vec!["openid", "email", "profile"])
 //!     .with_code_challenge_method(CodeChallengeMethod::S256)
+//!     .with_post_logout_redirect_uri("/")
+//!     .with_session_max_age(3600)
 //!     .build()?;
 //!
-//! // Create a cache implementation (using Redis in this example)
-//! # #[cfg(feature = "redis")]
+//! // Create an L1-only in-memory cache (requires the `moka-cache` feature).
+//! // For Redis, enable the `redis` feature and use `axum_oidc_client::redis::AuthCache`.
 //! let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
-//!     axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600)
+//!     TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?
 //! );
 //!
 //! // Create logout handler
 //! let logout_handler = Arc::new(DefaultLogoutHandler);
 //!
 //! // Build your application
-//! let app = Router::new()
+//! let app: Router<()> = Router::new()
 //!     .route("/", get(|| async { "Hello, World!" }))
 //!     .layer(AuthLayer::new(Arc::new(config), cache, logout_handler));
 //!
@@ -66,6 +70,7 @@
 //! - [`logout`]: Logout handler implementations (default and OIDC)
 //! - [`errors`]: Error types used throughout the library
 //! - [`redis`]: Redis-based cache implementation (requires `redis` feature)
+//! - [`cache`]: Two-tier cache combining Moka L1 with any L2 backend (requires `moka-cache` feature)
 //!
 //! ## Automatic ID Token and Access Token Refresh
 //!
@@ -111,6 +116,7 @@
 //! - `redis`: Enable Redis cache backend (default TLS)
 //! - `redis-rustls`: Enable Redis with rustls for TLS
 //! - `redis-native-tls`: Enable Redis with native-tls
+//! - `moka-cache`: Enable the two-tier in-memory L1 cache (Moka) wrapping any [`auth_cache::AuthCache`] L2 backend
 //!
 //! ## Examples
 //!
@@ -131,3 +137,6 @@ pub mod logout;
     feature = "redis-native-tls"
 ))]
 pub mod redis;
+
+#[cfg(feature = "moka-cache")]
+pub mod cache;
