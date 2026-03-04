@@ -13,14 +13,21 @@ The `axum-oidc-client` library provides **automatic ID token and access token re
 When a request arrives at a protected route:
 
 1. **Extraction** - The extractor retrieves the session from cache using the session cookie
-2. **Expiration Check** - Compares `session.expires` with the current time
-3. **Conditional Refresh** - If expired:
+2. **Expiration Check** - Inspects `session.expires`:
+   - If `None` (no expiry info was available at session creation) → refresh is **skipped entirely**
+   - If `Some(t)` and `t > now` → token is still valid, no refresh needed
+   - If `Some(t)` and `t <= now` → token has expired, proceed to refresh
+3. **Refresh Token Check** - Inspects `session.refresh_token`:
+   - If `None` → cannot refresh; user is redirected to re-authenticate
+   - If `Some(token)` → proceed with the refresh request
+4. **Conditional Refresh** - If expired and refresh token present:
    - Sends POST request to the OAuth2 token endpoint
    - Includes the refresh token and client credentials
-   - Receives new ID token, access token, and expiration time from the provider
-   - Updates the session with fresh ID token and access token data
+   - Receives new ID token, access token, and optionally a new expiration time from the provider
+   - Updates `access_token`, `id_token`, and `expires` (only if new expiry info is returned)
+   - Updates `refresh_token` if the provider issues a new one (token rotation)
    - Saves the updated session back to cache
-4. **Handler Execution** - Your route handler receives the fresh, valid tokens
+5. **Handler Execution** - Your route handler receives the fresh, valid tokens
 
 ### Request Flow Diagram
 
@@ -42,33 +49,43 @@ When a request arrives at a protected route:
 └──────┬──────────────┘
        │
        ▼
-┌─────────────────────┐
-│  Check Expiration   │
-│ (expires <= now?)   │
-└──────┬──────────────┘
+┌──────────────────────────┐
+│  Check expires field     │
+│ (is Some and <= now?)    │
+└──────┬───────────────────┘
        │
-       ├─ No ──────────────────────┐
+       ├─ None / Not expired ──────┐
        │                           │
-       │ Yes                       ▼
+       │ Some(t) and t <= now      ▼
        ▼                    ┌──────────────┐
-┌─────────────────────┐    │ Return Fresh │
-│ POST /token         │    │   Session    │
-│ grant_type=refresh  │    └──────┬───────┘
-│ refresh_token=...   │           │
-└──────┬──────────────┘           │
+┌─────────────────────┐     │ Return Fresh │
+│ Check refresh_token │     │   Session    │
+│ (is Some?)          │     └──────┬───────┘
+└──────┬──────────────┘            │
+       │                           │
+       ├─ None ────────────────────┤
+       │  (redirect to re-auth)    │
+       │ Some(token)               │
+       ▼                           │
+┌─────────────────────┐            │
+│ POST /token         │            │
+│ grant_type=refresh  │            │
+│ refresh_token=...   │            │
+└──────┬──────────────┘            │
        │                           │
        ▼                           │
-┌─────────────────────┐           │
-│ Update Session      │           │
-│ - access_token      │           │
-│ - id_token          │           │
-│ - expires           │           │
-└──────┬──────────────┘           │
+┌─────────────────────┐            │
+│ Update Session      │            │
+│ - access_token      │            │
+│ - id_token          │            │
+│ - expires (if new   │            │
+│   expiry returned)  │            │
+└──────┬──────────────┘            │
        │                           │
        ▼                           │
-┌─────────────────────┐           │
-│ Save to Cache       │           │
-└──────┬──────────────┘           │
+┌─────────────────────┐            │
+│ Save to Cache       │            │
+└──────┬──────────────┘            │
        │                           │
        └───────────────────────────┘
                 │
@@ -110,14 +127,18 @@ use axum_oidc_client::auth_session::AuthSession;
 async fn dashboard(session: AuthSession) -> String {
     // If ID token and access token were expired, they have already been refreshed
     // You always receive valid, fresh tokens
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    let scope = session.scope.as_deref().unwrap_or("(none)");
     format!(
         "Dashboard\n\
          Token Type: {}\n\
          Expires: {}\n\
          Scopes: {}",
         session.token_type,
-        session.expires,
-        session.scope
+        expires,
+        scope
     )
 }
 ```
@@ -349,10 +370,19 @@ If the token endpoint is unavailable:
 Ensure your cache can handle concurrent updates:
 
 ```rust
-// Redis automatically handles concurrent refresh requests
-// Only one refresh happens even with multiple concurrent requests
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+
+// L1-only in-memory cache (requires `moka-cache` feature, enabled by default)
 let cache = Arc::new(
-    axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600)
+    TwoTierAuthCache::new(None, TwoTierCacheConfig::default())
+        .expect("failed to build cache")
+);
+
+// Two-tier: Moka L1 + Redis L2 (requires both `moka-cache` and `redis` features)
+let redis = Arc::new(axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600));
+let cache = Arc::new(
+    TwoTierAuthCache::new(Some(redis), TwoTierCacheConfig::default())
+        .expect("failed to build cache")
 );
 ```
 
@@ -373,18 +403,22 @@ This will log refresh attempts and failures.
 ```rust
 async fn debug_session(session: AuthSession) -> String {
     let now = chrono::Local::now();
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    let is_expired = session.expires
+        .map(|e| e <= now)
+        .unwrap_or(false);
     format!(
         "Session Debug:\n\
          Current Time: {}\n\
          Expires: {}\n\
          Is Expired: {}\n\
-         Has Refresh Token: {}\n\
-         Refresh Token (first 20): {}",
+         Has Refresh Token: {}",
         now,
-        session.expires,
-        session.expires <= now,
-        !session.refresh_token.is_empty(),
-        &session.refresh_token[..20.min(session.refresh_token.len())]
+        expires,
+        is_expired,
+        session.refresh_token.is_some()
     )
 }
 ```
@@ -401,9 +435,12 @@ async fn test_refresh(session: AuthSession) -> String {
     // Check expiration and tokens
     // If you see a newer expiration time than initial auth,
     // ID token and access token refresh is working
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
     format!("Expires: {} | Token: {}",
-        session.expires,
-        &session.access_token[..20]
+        expires,
+        &session.access_token[..20.min(session.access_token.len())]
     )
 }
 ```

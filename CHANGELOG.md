@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-03-04
+
+### Added
+
+- **`Error` trait implementations**: `Error` now implements `std::fmt::Display` and `std::error::Error`
+  - `Display` provides human-readable messages for all error variants
+  - `std::error::Error::source()` exposes the underlying cause for `Request`, `InvalidCodeResponse`, and `InvalidTokenResponse` variants
+  - Makes `Error` composable with standard Rust error-handling idioms (`?`, `Box<dyn std::error::Error>`, `thiserror`, etc.)
+
+### Changed
+
+- **Documentation examples** (`src/extractors/mod.rs`): fixed access-token string truncation to use `.chars().take(20)` instead of a raw byte-index slice, avoiding potential panics on multi-byte characters
+- **Documentation examples** (`src/auth.rs`, `src/auth_builder.rs`, `src/lib.rs`): added missing `.with_post_logout_redirect_uri("/")` and `.with_session_max_age(…)` calls to builder snippets so they compile cleanly as doc-tests
+
 ## [0.2.0] - 2026-03-04
 
 ### Added

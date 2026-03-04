@@ -2,7 +2,7 @@
 
 A comprehensive OAuth2/OIDC authentication library for Axum web applications with PKCE (Proof Key for Code Exchange) support and token auto refresh capabilities.
 
-[![Crates.io](https://img.shields.io/crates/v/axum-oidc-client.svg)](https://crates.io/crates/axum-oidc-client)
+[![Crates.io](https://img.shields.io/crates/v/axum-oidc-client.svg?version=0.2.1)](https://crates.io/crates/axum-oidc-client)
 [![Documentation](https://docs.rs/axum-oidc-client/badge.svg)](https://docs.rs/axum-oidc-client)
 [![License](https://img.shields.io/crates/l/axum-oidc-client.svg)](LICENSE)
 
@@ -11,7 +11,7 @@ A comprehensive OAuth2/OIDC authentication library for Axum web applications wit
 - ✅ **OAuth2/OIDC Authentication** - Full support for OAuth2 and OpenID Connect protocols
 - 🔐 **PKCE Support** - Implements RFC 7636 for enhanced security
 - 🔄 **Automatic Token Refresh** - Seamlessly refreshes expired ID tokens and access tokens using OAuth2 refresh token flow
-- 💾 **Flexible Caching** - Pluggable cache backends with built-in Redis support
+- 💾 **Flexible Caching** - Pluggable cache backends with built-in two-tier in-memory (Moka L1) and Redis support
 - 🍪 **Secure Sessions** - Encrypted cookie-based session management
 - 🚪 **Logout Handlers** - Support for both standard and OIDC logout flows
 - 🎯 **Type-safe Extractors** - Convenient extractors for authenticated users and sessions
@@ -24,20 +24,28 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.1.0"
-axum = "0.7"
+axum-oidc-client = "0.2.1"
+axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
 
 ### Feature Flags
 
-- `redis` - Enable Redis cache backend with default TLS (enabled by default)
+- `moka-cache` - Enable the two-tier in-memory Moka L1 cache wrapping any `AuthCache` L2 backend (**enabled by default**)
+- `redis` - Enable Redis cache backend with default TLS
 - `redis-rustls` - Enable Redis with rustls for TLS
 - `redis-native-tls` - Enable Redis with native-tls
 
 ```toml
 [dependencies]
-axum-oidc-client = { version = "0.1.0", features = ["redis"] }
+# Default: includes moka-cache feature
+axum-oidc-client = "0.2.1"
+
+# With Redis support
+axum-oidc-client = { version = "0.2.1", features = ["redis"] }
+
+# With Redis + two-tier cache (L1 Moka + L2 Redis)
+axum-oidc-client = { version = "0.2.1", features = ["moka-cache", "redis"] }
 ```
 
 ## Quick Start
@@ -68,9 +76,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_base_path("/auth") // Optional: customize auth routes (default: "/auth")
         .build()?;
 
-    // Create cache (Redis example)
+    // Create cache — L1-only in-memory cache using Moka (requires `moka-cache` feature, enabled by default).
+    // For Redis (L2), enable the `redis` feature and see the Cache section below.
     let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
-        axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600)
+        axum_oidc_client::cache::TwoTierAuthCache::new(
+            None, // no L2 backend; pass Some(redis_cache) to enable Redis
+            axum_oidc_client::cache::config::TwoTierCacheConfig::default(),
+        )?
     );
 
     // Create logout handler
@@ -95,7 +107,10 @@ async fn home() -> &'static str {
 
 // This route requires authentication
 async fn protected(session: axum_oidc_client::auth_session::AuthSession) -> String {
-    format!("Hello, authenticated user! Token expires in: {} seconds", session.expires)
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    format!("Hello, authenticated user! Token expires: {}", expires)
 }
 ```
 
@@ -132,7 +147,10 @@ async fn user_info(token: IdToken) -> String {
 // Full session extractor with automatic token refresh
 async fn dashboard(session: AuthSession) -> String {
     // ID token and access token are automatically refreshed if expired
-    format!("Session expires: {}", session.expires)
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    format!("Session expires: {}", expires)
 }
 ```
 
@@ -156,6 +174,45 @@ Refresh tokens are automatically:
 ## API Documentation
 
 ### Core Modules
+
+#### `cache`
+
+Two-tier authentication cache combining a fast in-process [Moka](https://crates.io/crates/moka) L1 cache with any `AuthCache` implementation as the L2 backend (requires `moka-cache` feature, **enabled by default**).
+
+**Cache-aside pattern:**
+
+| Operation  | L1 (Moka)                      | L2 (backend)                   |
+|------------|--------------------------------|--------------------------------|
+| Read       | Check first; on miss go to L2  | Read on L1 miss; populate L1   |
+| Write      | Write                          | Write                          |
+| Invalidate | Remove                         | Remove                         |
+
+**L1-only (in-memory, no external dependency):**
+
+```rust
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+
+let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
+    TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?
+);
+```
+
+**Two-tier (Moka L1 + Redis L2):**
+
+```rust
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+
+let redis = Arc::new(axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600));
+let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
+    TwoTierAuthCache::new(Some(redis), TwoTierCacheConfig {
+        l1_max_capacity: 10_000,
+        l1_ttl_sec: 3600,
+        l1_time_to_idle_sec: Some(1800),
+        enable_l1: true,
+    })?
+);
+```
+
 
 #### `auth`
 
@@ -204,6 +261,7 @@ pub trait AuthCache {
 
 **Built-in Implementations:**
 
+- `cache::TwoTierAuthCache` - Two-tier cache: fast in-process Moka L1 + any `AuthCache` as L2 backend (requires `moka-cache` feature, **enabled by default**)
 - `redis::AuthCache` - Redis-backed cache (requires `redis` feature)
 
 **Custom Implementation:**
@@ -245,9 +303,9 @@ pub struct AuthSession {
     pub id_token: String,
     pub access_token: String,
     pub token_type: String,
-    pub refresh_token: Option<String>,
-    pub scope: String,
-    pub expires: DateTime<Local>,
+    pub refresh_token: Option<String>, // None if provider did not issue a refresh token
+    pub scope: Option<String>,         // None if provider did not return scope
+    pub expires: Option<DateTime<Local>>, // None if no expiry info was available
 }
 ```
 
@@ -290,8 +348,8 @@ async fn user_profile(token: IdToken) -> String {
 // Public route with optional authentication
 async fn home(OptionalIdToken(token): OptionalIdToken) -> String {
     match token {
-        Some(id_token) => format!("Welcome back!"),
-        None => format!("Please log in"),
+        Some(_id_token) => "Welcome back!".to_string(),
+        None => "Please log in".to_string(),
     }
 }
 ```
@@ -627,7 +685,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_session_max_age(30)
         .build()?;
 
-    let cache = Arc::new(/* your cache implementation */);
+    let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+        axum_oidc_client::cache::TwoTierAuthCache::new(
+            None,
+            axum_oidc_client::cache::config::TwoTierCacheConfig::default(),
+        )?
+    );
     let logout_handler = Arc::new(DefaultLogoutHandler);
 
     let app = Router::new()
@@ -647,7 +710,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn home() -> &'static str { "Home" }
 async fn protected(session: axum_oidc_client::auth_session::AuthSession) -> String {
-    format!("Protected content! Token expires: {}", session.expires)
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    format!("Protected content! Token expires: {}", expires)
 }
 ```
 
@@ -679,18 +745,29 @@ cargo run -- --client-id YOUR_ID --client-secret YOUR_SECRET
 
 ## Error Handling
 
-The library uses a custom `Error` type for all operations:
+The library uses a custom `Error` type for all operations. As of v0.2.1, `Error` implements both `std::fmt::Display` and `std::error::Error`, making it fully composable with standard Rust error-handling idioms (`?`, `Box<dyn std::error::Error>`, `anyhow`, etc.).
 
 ```rust
 use axum_oidc_client::errors::Error;
 
-match config.build() {
-    Ok(config) => { /* use config */ },
-    Err(Error::MissingParameter(param)) => {
+match result {
+    Ok(session) => { /* use session */ },
+    Err(Error::MissingPatameter(param)) => {
         eprintln!("Missing required parameter: {}", param);
     },
+    Err(Error::SessionExpired) => {
+        eprintln!("Session expired, redirect to login");
+    },
+    Err(Error::TokenRefreshFailedAuth(msg)) => {
+        eprintln!("Token refresh failed: {}", msg);
+    },
     Err(e) => {
-        eprintln!("Configuration error: {:?}", e);
+        // Display impl gives a human-readable message
+        eprintln!("Auth error: {}", e);
+        // source() exposes the underlying cause where available
+        if let Some(cause) = std::error::Error::source(&e) {
+            eprintln!("Caused by: {}", cause);
+        }
     }
 }
 ```
@@ -703,6 +780,8 @@ cargo test
 
 # Run with specific features
 cargo test --features redis
+cargo test --features moka-cache
+cargo test --all-features
 
 # Run example
 cargo run --example sample-server
@@ -719,11 +798,13 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## Acknowledgments
 
 - Built on top of [Axum](https://github.com/tokio-rs/axum)
-- Uses [pkce](https://crates.io/crates/pkce) for PKCE implementation
-- Session management with [tower-cookies](https://crates.io/crates/tower-cookies)
+- Uses [pkce-std](https://crates.io/crates/pkce-std) for PKCE implementation
+- Session management with [axum-extra](https://crates.io/crates/axum-extra) private cookies
+- Two-tier in-memory caching via [Moka](https://crates.io/crates/moka)
+- Optional Redis support via [redis-rs](https://crates.io/crates/redis)
 
 ## Support
 
 - 📚 [Documentation](https://docs.rs/axum-oidc-client)
-- 🐛 [Issue Tracker](https://github.com/yourusername/axum-oidc-client/issues)
-- 💬 [Discussions](https://github.com/yourusername/axum-oidc-client/discussions)
+- 🐛 [Issue Tracker](https://github.com/RedSoftwareSystems/axum-oidc-client/issues)
+- 💬 [Discussions](https://github.com/RedSoftwareSystems/axum-oidc-client/discussions)

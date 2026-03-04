@@ -6,8 +6,8 @@ A quick reference guide for common tasks and API usage.
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.1.0"
-axum = "0.7"
+axum-oidc-client = "0.2.1"
+axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -37,9 +37,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_base_path("/auth")  // Optional: default is "/auth"
         .build()?;
 
-    // 2. Create cache
-    let cache = Arc::new(
-        axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600)
+    // 2. Create cache (L1-only in-memory; requires `moka-cache` feature, enabled by default)
+    // For Redis (L2), enable the `redis` feature and pass Some(redis_cache) as the first argument.
+    let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+        axum_oidc_client::cache::TwoTierAuthCache::new(
+            None,
+            axum_oidc_client::cache::config::TwoTierCacheConfig::default(),
+        ).expect("failed to build cache")
     );
 
     // 3. Create logout handler
@@ -60,7 +64,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn home() -> &'static str { "Home" }
 async fn protected(session: AuthSession) -> String {
     // Token is automatically refreshed if expired
-    format!("Protected! Expires: {}", session.expires)
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    format!("Protected! Expires: {}", expires)
 }
 ```
 
@@ -82,7 +89,10 @@ use axum_oidc_client::extractors::{
 use axum_oidc_client::logout::handle_default_logout::DefaultLogoutHandler;
 use axum_oidc_client::logout::handle_oidc_logout::OidcLogoutHandler;
 
-// Cache
+// Cache (moka-cache feature, enabled by default)
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+
+// Cache (redis feature, optional)
 use axum_oidc_client::redis::AuthCache as RedisCache;
 
 // Errors
@@ -139,7 +149,11 @@ use axum_oidc_client::auth_session::AuthSession;
 
 async fn protected(session: AuthSession) -> String {
     // ID token and access token are automatically refreshed if expired
-    format!("Hello! Token expires: {}", session.expires)
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    let scope = session.scope.as_deref().unwrap_or("(none)");
+    format!("Hello! Token expires: {} | Scopes: {}", expires, scope)
 }
 ```
 
@@ -183,13 +197,17 @@ async fn home(OptionalIdToken(token): OptionalIdToken) -> String {
 ```rust
 async fn show_token(session: AuthSession) -> String {
     // ID token and access token are automatically refreshed if expired
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    let scope = session.scope.as_deref().unwrap_or("(none)");
     format!(
         "Access Token: {}\nID Token: {}\nToken Type: {}\nScopes: {}\nExpires: {}",
         session.access_token,
         session.id_token,
         session.token_type,
-        session.scope,
-        session.expires
+        scope,
+        expires
     )
 }
 ```
@@ -268,7 +286,7 @@ async fn protected(session: AuthSession) -> String {
 ```rust
 .with_authorization_endpoint("https://accounts.google.com/o/oauth2/auth")
 .with_token_endpoint("https://oauth2.googleapis.com/token")
-.with_end_session_endpoint("https://accounts.google.com/o/oauth2/revoke")
+// Note: DO NOT set end_session_endpoint for Google (no OIDC logout support)
 .with_scopes(vec!["openid", "email", "profile"])
 ```
 
@@ -295,13 +313,43 @@ let tenant = "common";
 
 ## Cache Implementations
 
-### Redis Cache
+### In-Memory Cache (Moka, default)
+
+Requires the `moka-cache` feature (**enabled by default**). No external dependencies.
 
 ```rust
-use axum_oidc_client::redis::AuthCache;
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
 
+// L1-only (pure in-memory)
 let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> =
-    Arc::new(AuthCache::new("redis://127.0.0.1/", 3600));
+    Arc::new(TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?);
+
+// Custom L1 tuning
+let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> =
+    Arc::new(TwoTierAuthCache::new(None, TwoTierCacheConfig {
+        l1_max_capacity: 5_000,
+        l1_ttl_sec: 1800,
+        l1_time_to_idle_sec: Some(600),
+        enable_l1: true,
+    })?);
+```
+
+### Redis Cache (L2 backend)
+
+Requires the `redis` feature. Can be used standalone or as L2 behind Moka.
+
+```rust
+use axum_oidc_client::redis::AuthCache as RedisCache;
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+
+// Redis only (L1 disabled)
+let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> =
+    Arc::new(RedisCache::new("redis://127.0.0.1/", 3600));
+
+// Two-tier: Moka L1 + Redis L2
+let redis = Arc::new(RedisCache::new("redis://127.0.0.1/", 3600));
+let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> =
+    Arc::new(TwoTierAuthCache::new(Some(redis), TwoTierCacheConfig::default())?);
 ```
 
 ### Custom Cache
@@ -626,12 +674,18 @@ tracing-subscriber = "0.3"
 tracing_subscriber::fmt::init();
 ```
 
-### Check Session, ID Token, Access Token, and Refresh Token
+### Check Session, ID Token, Access Token, and Refresh Token (Optional Fields)
 
 ```rust
 async fn debug(session: AuthSession) -> String {
     let now = chrono::Local::now();
-    let is_expired = session.expires <= now;
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    let is_expired = session.expires
+        .map(|e| e <= now)
+        .unwrap_or(false);
+    let scope = session.scope.as_deref().unwrap_or("(none)");
 
     format!(
         "Session Debug:\n\
@@ -644,11 +698,11 @@ async fn debug(session: AuthSession) -> String {
          Access Token (first 20): {}\n\
          ID Token (first 20): {}",
         session.token_type,
-        session.expires,
+        expires,
         now,
         is_expired,
-        session.scope,
-        !session.refresh_token.is_empty(),
+        scope,
+        session.refresh_token.is_some(),
         &session.access_token[..20.min(session.access_token.len())],
         &session.id_token[..20.min(session.id_token.len())]
     )
@@ -669,11 +723,14 @@ async fn debug(session: AuthSession) -> String {
 async fn test_refresh(session: AuthSession) -> String {
     // Wait for tokens to expire, then access again
     // The extractor will automatically refresh ID token and access token
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
     format!(
         "Tokens expire: {}\n\
          Access token (first 20 chars): {}\n\
          ID token (first 20 chars): {}",
-        session.expires,
+        expires,
         &session.access_token[..20.min(session.access_token.len())],
         &session.id_token[..20.min(session.id_token.len())]
     )
@@ -728,5 +785,5 @@ openssl rand -hex 32
 
 ---
 
-**Version:** 0.1.0  
-**Last Updated:** 2024
+**Version:** 0.2.1  
+**Last Updated:** 2026-03-04

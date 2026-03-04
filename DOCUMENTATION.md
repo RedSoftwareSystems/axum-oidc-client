@@ -1,4 +1,4 @@
-# axum-oidc-client API Documentation
+# axum-oidc-client API Documentation (v0.2.1)
 
 Complete API documentation and usage guide for the axum-oidc-client library.
 
@@ -18,7 +18,7 @@ Complete API documentation and usage guide for the axum-oidc-client library.
 - Full OAuth2 and OpenID Connect protocol support
 - PKCE (Proof Key for Code Exchange) for enhanced security
 - Automatic ID token and access token refresh using OAuth2 refresh token flow
-- Pluggable cache backends
+- Pluggable cache backends with two-tier in-memory (Moka L1) and Redis support
 - Encrypted session management
 - Type-safe extractors with automatic ID token and access token refresh
 - Flexible logout handlers
@@ -58,6 +58,59 @@ PKCE enhances OAuth2 security by:
 - Provider validates verifier matches challenge
 
 ## API Reference
+
+### Module: `cache`
+
+Two-tier authentication cache combining a fast in-process [Moka](https://crates.io/crates/moka) L1 cache with any `AuthCache` implementation as the L2 backend (requires the `moka-cache` feature, **enabled by default**).
+
+#### `TwoTierAuthCache`
+
+```rust
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+use axum_oidc_client::auth_cache::AuthCache;
+use std::sync::Arc;
+
+// L1-only (pure in-memory, no external dependency)
+let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
+    TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?
+);
+
+// Two-tier: Moka L1 + Redis L2 (requires both `moka-cache` and `redis` features)
+let redis = Arc::new(axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600));
+let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
+    TwoTierAuthCache::new(Some(redis), TwoTierCacheConfig {
+        l1_max_capacity: 10_000,
+        l1_ttl_sec: 3600,
+        l1_time_to_idle_sec: Some(1800),
+        enable_l1: true,
+    })?
+);
+```
+
+**Cache-aside behaviour:**
+
+| Operation  | L1 (Moka)                         | L2 (backend)                   |
+|------------|-----------------------------------|--------------------------------|
+| Read       | Check first; on miss, read L2     | Read on L1 miss; populate L1   |
+| Write      | Write                             | Write                          |
+| Invalidate | Remove                            | Remove                         |
+
+#### `TwoTierCacheConfig`
+
+Configuration struct to tune L1 behaviour:
+
+```rust
+pub struct TwoTierCacheConfig {
+    /// Maximum number of entries in the Moka L1 cache. Default: 10_000
+    pub l1_max_capacity: u64,
+    /// Time-to-live per entry in seconds. Default: 3600
+    pub l1_ttl_sec: u64,
+    /// Optional idle-eviction timeout in seconds. Default: None
+    pub l1_time_to_idle_sec: Option<u64>,
+    /// Set to false to bypass Moka entirely (useful for testing). Default: true
+    pub enable_l1: bool,
+}
+```
 
 ### Module: `auth`
 
@@ -216,6 +269,15 @@ pub trait AuthCache {
 
 **Built-in Implementations:**
 
+**Two-Tier Cache** (requires `moka-cache` feature, **enabled by default**):
+
+```rust
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+
+// L1-only
+let cache = TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?;
+```
+
 **Redis Cache** (requires `redis` feature):
 
 ```rust
@@ -260,19 +322,26 @@ pub struct AuthSession {
     pub id_token: String,
     pub access_token: String,
     pub token_type: String,
-    pub refresh_token: String,
-    pub scope: String,
-    pub expires: DateTime<Local>,
+    /// None if the provider did not issue a refresh token
+    pub refresh_token: Option<String>,
+    /// None if the provider did not return a scope
+    pub scope: Option<String>,
+    /// None if neither `expires_in` nor `token_max_age` were available at session creation.
+    /// When None, the token refresh logic is disabled entirely.
+    pub expires: Option<DateTime<Local>>,
 }
 ```
 
 **Auto-Refresh:**
-The `AuthSession` extractor automatically refreshes expired tokens when used in route handlers. If the session's access token has expired, the extractor:
+The `AuthSession` extractor automatically refreshes expired tokens when used in route handlers. If the session's access token has expired and a `refresh_token` is present, the extractor:
 
 1. Uses the refresh token to obtain a new access token
-2. Updates all token fields (access_token, id_token if provided, expires)
+2. Updates all token fields (`access_token`, `id_token` if provided, `expires` if new expiry info is returned)
 3. Saves the updated session to cache
 4. Returns the refreshed session to your handler
+
+When `expires` is `None`, the refresh logic is skipped (no expiry info was available at session creation).
+When `refresh_token` is `None`, expired sessions require re-authentication.
 
 This means you never need to manually check expiration or refresh tokens.
 
@@ -280,7 +349,11 @@ This means you never need to manually check expiration or refresh tokens.
 
 ```rust
 async fn protected(session: AuthSession) -> String {
-    format!("Token expires: {}", session.expires)
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    let scope = session.scope.as_deref().unwrap_or("(none)");
+    format!("Token expires: {} | Scopes: {}", expires, scope)
 }
 ```
 
@@ -456,15 +529,66 @@ impl LogoutHandler for CustomLogoutHandler {
 
 ### Module: `errors`
 
-Error types used throughout the library.
+Error types used throughout the library. As of v0.2.1, `Error` implements both `std::fmt::Display` and `std::error::Error`, making it fully composable with standard Rust error-handling idioms (`?`, `Box<dyn std::error::Error>`, etc.).
 
 ```rust
 pub enum Error {
-    MissingParameter(String),
-    InvalidToken,
-    CacheError,
-    NetworkError,
-    // ... more variants
+    // Core errors
+    MissingCodeVerifier,
+    MissingPatameter(String),
+    NotValidUri(String),
+    Request(reqwest::Error),
+    InvalidCodeResponse(serde_html_form::de::Error),
+    InvalidTokenResponse(serde_json::Error),
+    InvalidResponse(String),
+    CacheError(String),
+    TokenRefreshFailed(String),
+    // HTTP status code errors
+    BadRequest(String),
+    Unauthorized(String),
+    Forbidden(String),
+    NotFound(String),
+    TooManyRequests(String),
+    InternalServerError(String),
+    BadGateway(String),
+    ServiceUnavailable(String),
+    UnknownStatusCode(u16, String),
+    // Configuration errors
+    AuthCacheNotConfigured,
+    OAuthConfigNotConfigured,
+    HttpClientNotConfigured,
+    // Session and authentication errors
+    SessionNotFound,
+    SessionExpired,
+    CacheAccessError(String),
+    SessionUpdateFailed(String),
+    TokenRefreshFailedAuth(String),
+}
+```
+
+`Error` implements `std::fmt::Display` (human-readable messages) and `std::error::Error` with `source()` chaining for `Request`, `InvalidCodeResponse`, and `InvalidTokenResponse`.
+
+**Usage example:**
+
+```rust
+use axum_oidc_client::errors::Error;
+
+match result {
+    Ok(session) => { /* use session */ },
+    Err(Error::SessionExpired) => {
+        eprintln!("Session expired, redirect to login");
+    },
+    Err(Error::TokenRefreshFailedAuth(msg)) => {
+        eprintln!("Refresh failed: {}", msg);
+    },
+    Err(e) => {
+        // Display impl gives a human-readable message
+        eprintln!("Auth error: {}", e);
+        // source() provides the underlying cause where available
+        if let Some(cause) = std::error::Error::source(&e) {
+            eprintln!("Caused by: {}", cause);
+        }
+    }
 }
 ```
 
@@ -483,7 +607,10 @@ use axum_oidc_client::{auth_session::AuthSession, extractors::AccessToken};
 async fn dashboard(session: AuthSession) -> String {
     // If ID token and access token expired, they're automatically refreshed before this handler runs
     // You always get valid, fresh tokens
-    format!("Token expires at: {}", session.expires)
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    format!("Token expires at: {}", expires)
 }
 
 // Example 2: Access token only with automatic refresh
@@ -498,20 +625,21 @@ async fn api_endpoint(token: AccessToken) -> String {
 
 When an extractor detects expired ID token and access token:
 
-1. **Check Expiration**: Compares `session.expires` with current time
-2. **Refresh Request**: POSTs to token endpoint with refresh token:
+1. **Check Expiration**: Inspects `session.expires` — if `None`, refresh is skipped entirely; if `Some(t)` and `t <= now`, proceed to refresh
+2. **Check Refresh Token**: Inspects `session.refresh_token` — if `None`, user is redirected to re-authenticate; if `Some(token)`, proceed
+3. **Refresh Request**: POSTs to token endpoint with refresh token:
    ```
    grant_type=refresh_token
    refresh_token={session.refresh_token}
    client_id={config.client_id}
    ```
-3. **Update Session**: Updates session with new tokens:
+4. **Update Session**: Updates session with new tokens:
    - `access_token` - Always updated with new access token
    - `id_token` - Updated with new ID token if provider returns it
-   - `refresh_token` - Updated if provider returns new refresh token
-   - `expires` - Calculated from new `expires_in`
-4. **Save to Cache**: Persists updated session
-5. **Return Fresh Tokens**: Handler receives valid ID token and access token
+   - `refresh_token` - Updated if provider returns new refresh token (token rotation)
+   - `expires` - Updated only if the provider returns new expiry info (`expires_in`)
+5. **Save to Cache**: Persists updated session
+6. **Return Fresh Tokens**: Handler receives valid ID token and access token
 
 #### Error Handling
 
@@ -534,6 +662,8 @@ use axum::{Router, routing::get};
 use axum_oidc_client::{
     auth::AuthLayer,
     auth_builder::OAuthConfigurationBuilder,
+    auth_cache::AuthCache,
+    cache::{TwoTierAuthCache, config::TwoTierCacheConfig},
     logout::handle_default_logout::DefaultLogoutHandler,
 };
 use std::sync::Arc;
@@ -551,9 +681,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_session_max_age(30)
         .build()?;
 
-    // Create cache
-    let cache = Arc::new(
-        axum_oidc_client::redis::AuthCache::new("redis://127.0.0.1/", 3600)
+    // Create cache — L1-only in-memory (requires `moka-cache` feature, enabled by default).
+    // Replace None with Some(redis_cache) to add Redis as L2 backend.
+    let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
+        TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?
     );
 
     // Create logout handler
@@ -577,7 +708,10 @@ async fn home() -> &'static str {
 }
 
 async fn protected(session: axum_oidc_client::auth_session::AuthSession) -> String {
-    format!("Protected! Expires: {}", session.expires)
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    format!("Protected! Expires: {}", expires)
 }
 ```
 
@@ -626,14 +760,18 @@ use axum_oidc_client::{
 
 // Use AuthSession when you need full session info
 async fn dashboard(session: AuthSession) -> String {
+    let expires = session.expires
+        .map(|e| e.to_string())
+        .unwrap_or_else(|| "(no expiry)".to_string());
+    let scope = session.scope.as_deref().unwrap_or("(none)");
     format!(
         "Session info:\n\
          Token Type: {}\n\
          Expires: {}\n\
          Scopes: {}",
         session.token_type,
-        session.expires,
-        session.scope
+        expires,
+        scope
     )
 }
 
@@ -701,13 +839,10 @@ impl LogoutHandler for CustomLogoutHandler {
 ### Environment-based Configuration
 
 ```rust
-use dotenv::dotenv;
 use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenv().ok();
-
     let config = OAuthConfigurationBuilder::default()
         .with_client_id(&env::var("OAUTH_CLIENT_ID")?)
         .with_client_secret(&env::var("OAUTH_CLIENT_SECRET")?)
@@ -720,7 +855,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .build()?;
 
-    // ... rest of app
+    let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+        axum_oidc_client::cache::TwoTierAuthCache::new(
+            None,
+            axum_oidc_client::cache::config::TwoTierCacheConfig::default(),
+        )?
+    );
+
+    // ... rest of app setup
+    let _ = cache;
     Ok(())
 }
 ```
@@ -941,7 +1084,6 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(
 | Okta     | ✅ Full        | ✅ RP-Initiated Logout | `OidcLogoutHandler`    |
 | Auth0    | ✅ Full        | ✅ RP-Initiated Logout | `OidcLogoutHandler`    |
 
-```
 
 ## Automatic Routes
 
@@ -954,67 +1096,53 @@ The `AuthLayer` adds these routes automatically:
 | `/auth/logout`                | GET    | Logs out user, clears session                     |
 | `/auth/logout?redirect=/path` | GET    | Logs out and redirects to custom path             |
 
+> **Note:** The base path `/auth` is the default. Use `.with_base_path("/api/auth")` in the
+> `OAuthConfigurationBuilder` to mount routes at a custom path.
+
 ## Troubleshooting
 
 ### Common Issues
 
 **Issue: "Missing parameter" error**
 
-```
-
-Solution: Ensure all required configuration is set before calling build()
-
-```
+> **Solution:** Ensure all required configuration is set before calling `.build()`.
 
 **Issue: Session not persisting**
 
-```
-
-Solution: Check Redis connection and ensure cookies are enabled
-
-```
+> **Solution:** Check Redis/cache connection and ensure cookies are enabled in the browser.
 
 **Issue: Redirect loop**
 
-```
-
-Solution: Verify redirect_uri matches exactly in provider settings
-
-```
+> **Solution:** Verify `redirect_uri` matches exactly what is configured in your OAuth provider settings.
 
 **Issue: Token expired too quickly**
 
-```
-
-Solution: Adjust session_max_age and token_max_age settings
-
-```
+> **Solution:** Adjust `session_max_age` and `token_max_age` settings to appropriate values.
 
 **Issue: ID token and access token refresh failing**
 
-```
-
-Solution:
-
-1. Ensure your OAuth provider supports refresh tokens for obtaining new ID tokens and access tokens
-2. Check that the 'offline_access' or equivalent scope is requested
-3. Verify refresh_token is being stored in session
-4. Check provider logs for refresh token errors
-
-```
+> **Solution:**
+> 1. Ensure your OAuth provider supports refresh tokens for obtaining new ID tokens and access tokens
+> 2. Check that the `offline_access` (or equivalent) scope is requested
+> 3. Verify `refresh_token` is being stored in the session (it is now `Option<String>` — check it is `Some`)
+> 4. Check provider logs for refresh token errors
 
 **Issue: Frequent re-authentication required**
 
-```
+> **Solution:**
+> 1. Verify the refresh token is being returned by the provider (`session.refresh_token` is `Some`)
+> 2. Check `token_max_age` isn't set too low (tokens will refresh frequently)
+> 3. Ensure the cache is properly storing updated sessions with refreshed tokens
+> 4. Verify the provider's refresh token expiration policy
 
-Solution:
+**Issue: `session.expires` or `session.scope` is `None`**
 
-1. Verify refresh token is being returned by provider
-2. Check token_max_age isn't set too low (tokens will refresh frequently)
-3. Ensure cache is properly storing updated sessions with refreshed tokens
-4. Verify provider's refresh token expiration policy
-
-```
+> **Solution:** These fields are now `Option` types as of v0.2.0. Some providers do not return
+> `expires_in` or `scope` in the token response. Always handle the `None` case:
+> ```rust
+> let expires = session.expires.map(|e| e.to_string()).unwrap_or_else(|| "(no expiry)".to_string());
+> let scope = session.scope.as_deref().unwrap_or("(none)");
+> ```
 
 ## Additional Resources
 
@@ -1025,6 +1153,5 @@ Solution:
 
 ---
 
-**Last Updated:** 2024
-**Version:** 0.1.0
-```
+**Last Updated:** 2026-03-04
+**Version:** 0.2.1

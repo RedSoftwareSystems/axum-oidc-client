@@ -44,6 +44,13 @@ let config = OAuthConfigurationBuilder::default()
 // Use DefaultLogoutHandler since Google doesn't support OIDC logout
 let logout_handler = Arc::new(DefaultLogoutHandler);
 
+// cache: requires `moka-cache` feature (enabled by default) or `redis` feature
+// Example: L1-only in-memory cache
+// let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+//     axum_oidc_client::cache::TwoTierAuthCache::new(
+//         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
+//     ).expect("failed to build cache")
+// );
 let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
@@ -105,6 +112,13 @@ let config = OAuthConfigurationBuilder::default()
 // Use DefaultLogoutHandler since GitHub doesn't support OIDC logout
 let logout_handler = Arc::new(DefaultLogoutHandler);
 
+// cache: requires `moka-cache` feature (enabled by default) or `redis` feature
+// Example: L1-only in-memory cache
+// let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+//     axum_oidc_client::cache::TwoTierAuthCache::new(
+//         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
+//     ).expect("failed to build cache")
+// );
 let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
@@ -181,6 +195,13 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(&format!(
     keycloak_url, realm
 )));
 
+// cache: requires `moka-cache` feature (enabled by default) or `redis` feature
+// Example: L1-only in-memory cache
+// let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+//     axum_oidc_client::cache::TwoTierAuthCache::new(
+//         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
+//     ).expect("failed to build cache")
+// );
 let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
@@ -263,6 +284,13 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(&format!(
     tenant
 )));
 
+// cache: requires `moka-cache` feature (enabled by default) or `redis` feature
+// Example: L1-only in-memory cache
+// let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+//     axum_oidc_client::cache::TwoTierAuthCache::new(
+//         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
+//     ).expect("failed to build cache")
+// );
 let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
@@ -344,6 +372,13 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(&format!(
     okta_domain
 )));
 
+// cache: requires `moka-cache` feature (enabled by default) or `redis` feature
+// Example: L1-only in-memory cache
+// let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+//     axum_oidc_client::cache::TwoTierAuthCache::new(
+//         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
+//     ).expect("failed to build cache")
+// );
 let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
@@ -423,6 +458,13 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(&format!(
     auth0_domain
 )));
 
+// cache: requires `moka-cache` feature (enabled by default) or `redis` feature
+// Example: L1-only in-memory cache
+// let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+//     axum_oidc_client::cache::TwoTierAuthCache::new(
+//         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
+//     ).expect("failed to build cache")
+// );
 let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
@@ -569,5 +611,5 @@ See [README.md](README.md#custom-handler) for implementation details.
 
 ---
 
-**Version:** 0.1.0  
-**Last Updated:** 2024
+**Version:** 0.2.1  
+**Last Updated:** 2026-03-04
