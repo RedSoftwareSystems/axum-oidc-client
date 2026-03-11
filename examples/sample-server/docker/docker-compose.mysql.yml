@@ -1,0 +1,192 @@
+# docker-compose.mysql.yml — MySQL 8 + nightly OPTIMIZE / ANALYZE cron for axum-oidc-client sample-server
+#
+# Services
+# ────────
+#   mysql        – MySQL 8.0 with InnoDB tuned for a high-churn ephemeral
+#                  cache table (small rows, heavy INSERT/DELETE traffic).
+#
+#   optimize-cron – A lightweight Alpine-based container that runs
+#                   `OPTIMIZE TABLE oidc_cache` and `ANALYZE TABLE oidc_cache`
+#                   every day at midnight (UTC by default).
+#
+#                   Why both?
+#                   • OPTIMIZE TABLE  – rebuilds the InnoDB tablespace to
+#                     reclaim fragmented free pages left after bulk DELETEs.
+#                     Unlike PostgreSQL's dead-tuple model, InnoDB's purge
+#                     thread reclaims row storage automatically, but page
+#                     fragmentation (holes in the B-tree) accumulates over
+#                     time and must be addressed with a full table rebuild.
+#                     OPTIMIZE TABLE is equivalent to ALTER TABLE … ENGINE=InnoDB
+#                     and therefore takes a brief metadata lock, so scheduling
+#                     it during off-peak hours is recommended.
+#                   • ANALYZE TABLE   – refreshes InnoDB index statistics so
+#                     the query optimiser keeps choosing the `expires_at` index
+#                     for cleanup and read queries after the row distribution
+#                     has shifted significantly.
+#
+# Quick start
+# ───────────
+#   cp .env.mysql.example .env.local
+#   # edit .env.local with real OAuth2 credentials
+#   docker compose -f docker/docker-compose.mysql.yml up -d
+#
+# Environment variables (override in .env.local or shell)
+# ────────────────────────────────────────────────────────
+#   MYSQL_USER            – application user name       (default: oidc_user)
+#   MYSQL_PASSWORD        – application user password   (default: oidc_pass)
+#   MYSQL_DATABASE        – database / schema name      (default: oidc_cache)
+#   MYSQL_ROOT_PASSWORD   – root password for init      (default: root_pass)
+#   MYSQL_PORT            – host-side port mapping      (default: 3306)
+#   OPTIMIZE_SCHEDULE     – cron expression             (default: 0 0 * * *)
+#                           Override to test more frequently: "*/5 * * * *"
+
+name: axum-oidc-mysql
+
+# ─── Shared environment block ─────────────────────────────────────────────────
+x-mysql-env: &mysql-env
+  MYSQL_USER:          ${MYSQL_USER:-oidc_user}
+  MYSQL_PASSWORD:      ${MYSQL_PASSWORD:-oidc_pass}
+  MYSQL_DATABASE:      ${MYSQL_DATABASE:-oidc_cache}
+
+services:
+
+  # ── MySQL 8.0 ─────────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: oidc-mysql
+    restart: unless-stopped
+
+    environment:
+      <<: *mysql-env
+      # Root password is required by the official MySQL image even when an
+      # application user is created via MYSQL_USER / MYSQL_PASSWORD.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pass}
+
+    # InnoDB / MySQL runtime parameters
+    # ──────────────────────────────────
+    # Passed as --<option>=<value> flags on the mysqld command line.
+    # These override the compiled-in defaults without needing a my.cnf volume.
+    #
+    # Key parameters for a high-churn cache table:
+    #
+    #   innodb_buffer_pool_size        – the single most important InnoDB tuning
+    #                                    knob; all hot data and indexes are kept
+    #                                    here.  256 MB is generous for a cache-
+    #                                    only database in a local Docker stack.
+    #
+    #   innodb_flush_log_at_trx_commit – 1 = fully ACID (default); 2 = flush
+    #                                    to OS buffer each commit, sync once per
+    #                                    second.  For ephemeral cache data 2
+    #                                    gives a significant write-throughput
+    #                                    boost at the cost of up to 1 s of
+    #                                    transactions on a hard crash.
+    #
+    #   innodb_log_file_size           – larger redo log reduces checkpoint
+    #                                    frequency for write-heavy workloads.
+    #
+    #   innodb_purge_threads           – number of threads that process the
+    #                                    InnoDB purge (reclaiming undo log
+    #                                    space from deleted/updated rows).
+    #                                    4 threads handles bursts of mass-expiry
+    #                                    deletes efficiently.
+    #
+    #   innodb_max_purge_lag           – if the purge lag exceeds this many
+    #                                    transactions MySQL throttles DML to let
+    #                                    purge catch up (0 = unlimited; tune if
+    #                                    you observe DML throttling in the logs).
+    #
+    #   innodb_file_per_table          – each table gets its own .ibd file,
+    #                                    which is reclaimed to the OS when the
+    #                                    table is dropped or OPTIMIZE'd.
+    #                                    Required for OPTIMIZE TABLE to actually
+    #                                    shrink the on-disk footprint.
+    #
+    #   slow_query_log / long_query_time – log queries slower than 1 second to
+    #                                    stdout so `docker logs` surfaces them.
+    #
+    #   character-set-server / collation-server – utf8mb4 ensures cache keys
+    #                                    with arbitrary Unicode content are
+    #                                    stored correctly.
+    command: >
+      --innodb-buffer-pool-size=256M
+      --innodb-flush-log-at-trx-commit=2
+      --innodb-log-file-size=128M
+      --innodb-purge-threads=4
+      --innodb-max-purge-lag=0
+      --innodb-file-per-table=ON
+      --slow-query-log=ON
+      --slow-query-log-file=/dev/stdout
+      --long-query-time=1
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+      --max-connections=200
+
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+
+    volumes:
+      # Persistent data volume.
+      - mysql_data:/var/lib/mysql
+      # Init SQL scripts – executed once on first container startup in
+      # lexicographic filename order by the official MySQL entrypoint.
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          mysqladmin ping
+            --host=127.0.0.1
+            --user=${MYSQL_USER:-oidc_user}
+            --password=${MYSQL_PASSWORD:-oidc_pass}
+            --silent
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 30s
+
+    networks:
+      - oidc-mysql-net
+
+  # ── Nightly OPTIMIZE + ANALYZE cron ──────────────────────────────────────────
+  #
+  # Why a separate container rather than a MySQL EVENT?
+  #   • The MySQL Event Scheduler requires the `event_scheduler=ON` GUC and
+  #     superuser privileges to create events, which couples maintenance logic
+  #     to the database schema.
+  #   • A sidecar container is self-contained, observable via `docker logs`,
+  #     and can be restarted or rescheduled independently of the database.
+  #   • OPTIMIZE TABLE acquires a metadata lock which can block DML for a
+  #     moment; running it from outside the database makes the window explicit.
+  optimize-cron:
+    build:
+      context: ./optimize-cron
+      dockerfile: Dockerfile
+    container_name: oidc-optimize-cron
+    restart: unless-stopped
+
+    environment:
+      <<: *mysql-env
+      MYSQL_HOST:         mysql
+      MYSQL_PORT_INNER:   3306
+      # 5-field cron expression: minute hour dom month dow
+      # Default: every day at midnight UTC
+      OPTIMIZE_SCHEDULE:  ${OPTIMIZE_SCHEDULE:-0 0 * * *}
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+    networks:
+      - oidc-mysql-net
+
+# ─── Named volumes ────────────────────────────────────────────────────────────
+volumes:
+  mysql_data:
+    driver: local
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  oidc-mysql-net:
+    driver: bridge

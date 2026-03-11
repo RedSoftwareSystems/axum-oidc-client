@@ -12,11 +12,17 @@
 //! The active cache feature controls which CLI arguments and environment
 //! variables are available:
 //!
-//! | Feature       | Extra args                                              |
-//! |---------------|---------------------------------------------------------|
-//! | `cache-l2`    | `--redis-url`, `--cache-ttl`                            |
-//! | `cache-l1`    | `--l1-max-capacity`, `--l1-ttl-sec`, `--l1-tti-sec`     |
-//! | `cache-l1-l2` | all of the above                                        |
+//! | Feature          | Extra args                                                                   |
+//! |------------------|------------------------------------------------------------------------------|
+//! | `cache-l2`       | `--redis-url`, `--cache-ttl`                                                 |
+//! | `cache-l1`       | `--l1-max-capacity`, `--l1-ttl-sec`, `--l1-tti-sec`                          |
+//! | `cache-l1-l2`    | all of the above                                                             |
+//! | `cache-pg`       | `--pg-url`, `--pg-max-connections`, `--pg-cleanup-interval-sec`              |
+//! | `cache-l1-pg`    | all of `cache-l1` above + all of `cache-pg` above                           |
+//! | `cache-mysql`    | `--mysql-url`, `--mysql-max-connections`, `--mysql-cleanup-interval-sec`     |
+//! | `cache-l1-mysql` | all of `cache-l1` above + all of `cache-mysql` above                        |
+//! | `cache-sqlite`   | `--sqlite-url`, `--sqlite-max-connections`, `--sqlite-cleanup-interval-sec`  |
+//! | `cache-l1-sqlite`| all of `cache-l1` above + all of `cache-sqlite` above                       |
 
 use axum_oidc_client::{
     auth::{CodeChallengeMethod, OAuthConfiguration},
@@ -204,6 +210,179 @@ pub struct Args {
         help = "Moka L1 cache time-to-idle in seconds (optional) [cache-l1 / cache-l1-l2]"
     )]
     pub l1_time_to_idle_sec: Option<u64>,
+
+    // ── PostgreSQL cache args ──────────────────────────────────────────────────
+    /// PostgreSQL connection URL.
+    ///
+    /// Used when the `cache-pg` or `cache-l1-pg` feature is enabled.
+    /// Example: `postgresql://oidc_user:secret@localhost:5432/oidc_cache`
+    #[cfg(feature = "cache-pg")]
+    #[arg(
+        long,
+        env = "PG_URL",
+        default_value = "postgresql://oidc_user:oidc_pass@localhost:5432/oidc_cache",
+        help = "PostgreSQL connection URL [cache-pg / cache-l1-pg]"
+    )]
+    pub pg_url: String,
+
+    /// Maximum number of connections in the PostgreSQL connection pool.
+    ///
+    /// Used when the `cache-pg` or `cache-l1-pg` feature is enabled.
+    #[cfg(feature = "cache-pg")]
+    #[arg(
+        long,
+        env = "PG_MAX_CONNECTIONS",
+        default_value = "20",
+        help = "PostgreSQL pool max connections [cache-pg / cache-l1-pg]"
+    )]
+    pub pg_max_connections: u32,
+
+    /// How often (seconds) the background cleanup task sweeps expired rows
+    /// from the `oidc_cache` table.
+    ///
+    /// Used when the `cache-pg` or `cache-l1-pg` feature is enabled.
+    #[cfg(feature = "cache-pg")]
+    #[arg(
+        long,
+        env = "PG_CLEANUP_INTERVAL_SEC",
+        default_value = "300",
+        help = "PostgreSQL cache cleanup interval in seconds [cache-pg / cache-l1-pg]"
+    )]
+    pub pg_cleanup_interval_sec: u64,
+
+    /// TTL (seconds) for the Moka L1 layer when used in front of PostgreSQL.
+    ///
+    /// Should match or slightly exceed the session max-age so that stale L1
+    /// entries never outlive valid PostgreSQL rows.
+    ///
+    /// Only relevant when `cache-l1-pg` is enabled.
+    #[cfg(feature = "cache-l1")]
+    #[cfg(feature = "cache-pg")]
+    #[arg(
+        long,
+        env = "PG_L1_TTL_SEC",
+        default_value = "1800",
+        help = "Moka L1 TTL in seconds when used in front of PostgreSQL [cache-l1-pg]"
+    )]
+    pub pg_l1_ttl_sec: u64,
+
+    // ── MySQL / MariaDB cache args ─────────────────────────────────────────────
+    /// MySQL / MariaDB connection URL.
+    ///
+    /// Used when the `cache-mysql` or `cache-l1-mysql` feature is enabled.
+    /// Example: `mysql://oidc_user:oidc_pass@localhost:3306/oidc_cache`
+    #[cfg(feature = "cache-mysql")]
+    #[arg(
+        long,
+        env = "MYSQL_URL",
+        default_value = "mysql://oidc_user:oidc_pass@localhost:3306/oidc_cache",
+        help = "MySQL / MariaDB connection URL [cache-mysql / cache-l1-mysql]"
+    )]
+    pub mysql_url: String,
+
+    /// Maximum number of connections in the MySQL connection pool.
+    ///
+    /// Used when the `cache-mysql` or `cache-l1-mysql` feature is enabled.
+    #[cfg(feature = "cache-mysql")]
+    #[arg(
+        long,
+        env = "MYSQL_MAX_CONNECTIONS",
+        default_value = "20",
+        help = "MySQL pool max connections [cache-mysql / cache-l1-mysql]"
+    )]
+    pub mysql_max_connections: u32,
+
+    /// How often (seconds) the background cleanup task sweeps expired rows
+    /// from the `oidc_cache` table.
+    ///
+    /// Used when the `cache-mysql` or `cache-l1-mysql` feature is enabled.
+    #[cfg(feature = "cache-mysql")]
+    #[arg(
+        long,
+        env = "MYSQL_CLEANUP_INTERVAL_SEC",
+        default_value = "300",
+        help = "MySQL cache cleanup interval in seconds [cache-mysql / cache-l1-mysql]"
+    )]
+    pub mysql_cleanup_interval_sec: u64,
+
+    /// TTL (seconds) for the Moka L1 layer when used in front of MySQL.
+    ///
+    /// Should be <= the session max-age so that a stale L1 hit never returns
+    /// a session that has already been invalidated in MySQL.
+    ///
+    /// Only relevant when `cache-l1-mysql` is enabled.
+    #[cfg(feature = "cache-l1")]
+    #[cfg(feature = "cache-mysql")]
+    #[arg(
+        long,
+        env = "MYSQL_L1_TTL_SEC",
+        default_value = "1800",
+        help = "Moka L1 TTL in seconds when used in front of MySQL [cache-l1-mysql]"
+    )]
+    pub mysql_l1_ttl_sec: u64,
+
+    // ── SQLite cache args ──────────────────────────────────────────────────────
+    /// SQLite connection URL.
+    ///
+    /// Used when the `cache-sqlite` or `cache-l1-sqlite` feature is enabled.
+    /// Use a file path (`sqlite:///path/to/cache.db`) or `:memory:` for an
+    /// ephemeral in-process database (`sqlite://:memory:`).
+    ///
+    /// The parent directory must exist and be writable before the server starts.
+    /// With `sqlite:///data/oidc_cache.db` SQLite creates the file automatically
+    /// if it does not exist.
+    #[cfg(feature = "cache-sqlite")]
+    #[arg(
+        long,
+        env = "SQLITE_URL",
+        default_value = "sqlite:///tmp/oidc_cache.db",
+        help = "SQLite connection URL [cache-sqlite / cache-l1-sqlite]"
+    )]
+    pub sqlite_url: String,
+
+    /// Maximum number of connections in the SQLite connection pool.
+    ///
+    /// SQLite supports only one concurrent writer.  Keep this value low
+    /// (1 – 5) to avoid lock contention.  Default: `5`.
+    ///
+    /// Used when the `cache-sqlite` or `cache-l1-sqlite` feature is enabled.
+    #[cfg(feature = "cache-sqlite")]
+    #[arg(
+        long,
+        env = "SQLITE_MAX_CONNECTIONS",
+        default_value = "5",
+        help = "SQLite pool max connections [cache-sqlite / cache-l1-sqlite]"
+    )]
+    pub sqlite_max_connections: u32,
+
+    /// How often (seconds) the background cleanup task sweeps expired rows
+    /// from the `oidc_cache` table.
+    ///
+    /// Used when the `cache-sqlite` or `cache-l1-sqlite` feature is enabled.
+    #[cfg(feature = "cache-sqlite")]
+    #[arg(
+        long,
+        env = "SQLITE_CLEANUP_INTERVAL_SEC",
+        default_value = "300",
+        help = "SQLite cache cleanup interval in seconds [cache-sqlite / cache-l1-sqlite]"
+    )]
+    pub sqlite_cleanup_interval_sec: u64,
+
+    /// TTL (seconds) for the Moka L1 layer when used in front of SQLite.
+    ///
+    /// Should be <= the session max-age so that a stale L1 hit never returns
+    /// a session that has already been invalidated in SQLite.
+    ///
+    /// Only relevant when `cache-l1-sqlite` is enabled.
+    #[cfg(feature = "cache-l1")]
+    #[cfg(feature = "cache-sqlite")]
+    #[arg(
+        long,
+        env = "SQLITE_L1_TTL_SEC",
+        default_value = "1800",
+        help = "Moka L1 TTL in seconds when used in front of SQLite [cache-l1-sqlite]"
+    )]
+    pub sqlite_l1_ttl_sec: u64,
 }
 
 /// Parse a code challenge method from a string.
@@ -358,32 +537,173 @@ impl Args {
     ///
     /// The output is controlled by the active cache feature flag:
     ///
-    /// - `cache-l1-l2` → Two-tier (Moka L1 + Redis L2) with all settings
-    /// - `cache-l1`    → L1-only (Moka) with L1 settings
-    /// - `cache-l2`    → L2-only (Redis) with Redis settings
+    /// - `cache-l1-l2`    → Two-tier (Moka L1 + Redis L2) with all settings
+    /// - `cache-l1`       → L1-only (Moka) with L1 settings
+    /// - `cache-l2`       → L2-only (Redis) with Redis settings
+    /// - `cache-pg`       → PostgreSQL-only with PG settings
+    /// - `cache-l1-pg`    → Two-tier (Moka L1 + PostgreSQL L2) with all settings
+    /// - `cache-mysql`    → MySQL-only with MySQL settings
+    /// - `cache-l1-mysql` → Two-tier (Moka L1 + MySQL L2) with all settings
     pub fn print_cache_config(&self) {
         // ── Mode banner ───────────────────────────────────────────────────────
-        #[cfg(all(feature = "cache-l1", feature = "cache-l2"))]
+        #[cfg(all(
+            feature = "cache-l1",
+            feature = "cache-l2",
+            not(feature = "cache-pg"),
+            not(feature = "cache-mysql"),
+        ))]
         println!("\n🗄️  Cache: Two-tier (Moka L1 + Redis L2)");
 
-        #[cfg(all(feature = "cache-l1", not(feature = "cache-l2")))]
+        #[cfg(all(
+            feature = "cache-l1",
+            not(feature = "cache-l2"),
+            not(feature = "cache-pg"),
+            not(feature = "cache-mysql"),
+        ))]
         println!("\n🗄️  Cache: L1-only (Moka in-process, no external backend)");
 
-        #[cfg(all(feature = "cache-l2", not(feature = "cache-l1")))]
+        #[cfg(all(
+            feature = "cache-l2",
+            not(feature = "cache-l1"),
+            not(feature = "cache-pg"),
+            not(feature = "cache-mysql"),
+        ))]
         println!("\n🗄️  Cache: L2-only (Redis)");
 
+        #[cfg(all(
+            feature = "cache-pg",
+            feature = "cache-l1",
+            not(feature = "cache-mysql")
+        ))]
+        println!("\n🗄️  Cache: Two-tier (Moka L1 + PostgreSQL L2)");
+
+        #[cfg(all(
+            feature = "cache-pg",
+            not(feature = "cache-l1"),
+            not(feature = "cache-mysql")
+        ))]
+        println!("\n🗄️  Cache: PostgreSQL-only (no in-process L1 layer)");
+
+        #[cfg(all(
+            feature = "cache-mysql",
+            feature = "cache-l1",
+            not(feature = "cache-pg")
+        ))]
+        println!("\n🗄️  Cache: Two-tier (Moka L1 + MySQL L2)");
+
+        #[cfg(all(
+            feature = "cache-mysql",
+            not(feature = "cache-l1"),
+            not(feature = "cache-pg")
+        ))]
+        println!("\n🗄️  Cache: MySQL-only (no in-process L1 layer)");
+
         // ── L2 (Redis) settings ───────────────────────────────────────────────
-        #[cfg(feature = "cache-l2")]
+        #[cfg(all(
+            feature = "cache-l2",
+            not(feature = "cache-pg"),
+            not(feature = "cache-mysql")
+        ))]
         {
             println!("  - Redis URL: {}", self.redis_url);
             println!("  - Cache TTL: {}s", self.cache_ttl);
         }
 
-        // ── L1 (Moka) settings ────────────────────────────────────────────────
-        #[cfg(feature = "cache-l1")]
+        // ── L1 (Moka) settings – Redis or standalone ──────────────────────────
+        #[cfg(all(
+            feature = "cache-l1",
+            not(feature = "cache-pg"),
+            not(feature = "cache-mysql"),
+        ))]
         {
             println!("  - L1 Max Capacity: {} entries", self.l1_max_capacity);
             println!("  - L1 TTL: {}s", self.l1_ttl_sec);
+            match self.l1_time_to_idle_sec {
+                Some(tti) => println!("  - L1 Time-to-Idle: {}s", tti),
+                None => println!("  - L1 Time-to-Idle: disabled"),
+            }
+        }
+
+        // ── PostgreSQL settings ───────────────────────────────────────────────
+        #[cfg(all(feature = "cache-pg", not(feature = "cache-mysql")))]
+        {
+            println!("  - PG URL: {}", self.pg_url);
+            println!("  - PG Max Connections: {}", self.pg_max_connections);
+            println!("  - PG Cleanup Interval: {}s", self.pg_cleanup_interval_sec);
+        }
+
+        // ── L1 (Moka) settings – PostgreSQL two-tier ──────────────────────────
+        #[cfg(all(
+            feature = "cache-l1",
+            feature = "cache-pg",
+            not(feature = "cache-mysql")
+        ))]
+        {
+            println!("  - L1 Max Capacity: {} entries", self.l1_max_capacity);
+            println!("  - L1 TTL (PG): {}s", self.pg_l1_ttl_sec);
+            match self.l1_time_to_idle_sec {
+                Some(tti) => println!("  - L1 Time-to-Idle: {}s", tti),
+                None => println!("  - L1 Time-to-Idle: disabled"),
+            }
+        }
+
+        // ── MySQL settings ────────────────────────────────────────────────────
+        #[cfg(feature = "cache-mysql")]
+        {
+            println!("  - MySQL URL: {}", self.mysql_url);
+            println!("  - MySQL Max Connections: {}", self.mysql_max_connections);
+            println!(
+                "  - MySQL Cleanup Interval: {}s",
+                self.mysql_cleanup_interval_sec
+            );
+        }
+
+        // ── L1 (Moka) settings – MySQL two-tier ───────────────────────────────
+        #[cfg(all(feature = "cache-l1", feature = "cache-mysql"))]
+        {
+            println!("  - L1 Max Capacity: {} entries", self.l1_max_capacity);
+            println!("  - L1 TTL (MySQL): {}s", self.mysql_l1_ttl_sec);
+            match self.l1_time_to_idle_sec {
+                Some(tti) => println!("  - L1 Time-to-Idle: {}s", tti),
+                None => println!("  - L1 Time-to-Idle: disabled"),
+            }
+        }
+
+        #[cfg(all(
+            feature = "cache-sqlite",
+            feature = "cache-l1",
+            not(feature = "cache-pg"),
+            not(feature = "cache-mysql"),
+        ))]
+        println!("\n🗄️  Cache: Two-tier (Moka L1 + SQLite L2)");
+
+        #[cfg(all(
+            feature = "cache-sqlite",
+            not(feature = "cache-l1"),
+            not(feature = "cache-pg"),
+            not(feature = "cache-mysql"),
+        ))]
+        println!("\n🗄️  Cache: SQLite-only (no in-process L1 layer)");
+
+        // ── SQLite settings ───────────────────────────────────────────────────
+        #[cfg(feature = "cache-sqlite")]
+        {
+            println!("  - SQLite URL: {}", self.sqlite_url);
+            println!(
+                "  - SQLite Max Connections: {}",
+                self.sqlite_max_connections
+            );
+            println!(
+                "  - SQLite Cleanup Interval: {}s",
+                self.sqlite_cleanup_interval_sec
+            );
+        }
+
+        // ── L1 (Moka) settings – SQLite two-tier ──────────────────────────────
+        #[cfg(all(feature = "cache-l1", feature = "cache-sqlite"))]
+        {
+            println!("  - L1 Max Capacity: {} entries", self.l1_max_capacity);
+            println!("  - L1 TTL (SQLite): {}s", self.sqlite_l1_ttl_sec);
             match self.l1_time_to_idle_sec {
                 Some(tti) => println!("  - L1 Time-to-Idle: {}s", tti),
                 None => println!("  - L1 Time-to-Idle: disabled"),

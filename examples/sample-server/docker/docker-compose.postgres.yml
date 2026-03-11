@@ -1,0 +1,148 @@
+# docker-compose.postgres.yml — PostgreSQL 18 + nightly VACUUM cron for axum-oidc-client sample-server
+#
+# Services
+# ────────
+#   postgres   – PostgreSQL 18 with autovacuum aggressively tuned for the
+#                `oidc_cache` table (high-churn ephemeral PKCE/session data).
+#
+#   vacuum-cron – A lightweight Alpine-based container that runs a
+#                 `VACUUM ANALYZE oidc_cache` job every day at midnight
+#                 (00:00 server time, UTC by default).  This supplements
+#                 autovacuum by reclaiming dead tuples after large expiry
+#                 waves (e.g. mass logouts) and keeps planner statistics fresh.
+#
+# Quick start
+# ───────────
+#   cp .env.postgres.example .env.local
+#   # edit .env.local with real OAuth2 credentials
+#   docker compose -f docker/docker-compose.postgres.yml up -d
+#
+# Environment variables (override in .env.local or shell)
+# ────────────────────────────────────────────────────────
+#   POSTGRES_USER        – superuser name            (default: oidc_user)
+#   POSTGRES_PASSWORD    – superuser password        (default: oidc_pass)
+#   POSTGRES_DB          – database name             (default: oidc_cache)
+#   POSTGRES_PORT        – host-side port mapping    (default: 5432)
+#   VACUUM_SCHEDULE      – cron expression for VACUUM (default: 0 0 * * *)
+#                          Override to test more frequently, e.g. "*/5 * * * *"
+
+name: axum-oidc-sample
+
+# ─── Shared defaults ──────────────────────────────────────────────────────────
+x-pg-env: &pg-env
+  POSTGRES_USER:     ${POSTGRES_USER:-oidc_user}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oidc_pass}
+  POSTGRES_DB:       ${POSTGRES_DB:-oidc_cache}
+
+services:
+
+  # ── PostgreSQL 18 ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:18-alpine
+    container_name: oidc-postgres
+    restart: unless-stopped
+
+    environment:
+      <<: *pg-env
+
+    # PostgreSQL runtime parameters
+    # ─────────────────────────────
+    # Global autovacuum is left ON (the default) so that all other tables
+    # continue to benefit from automatic maintenance.  The aggressive per-table
+    # settings applied by the init script ensure the cache table is vacuumed
+    # much more frequently than the global thresholds would trigger.
+    #
+    # Key parameters explained:
+    #   autovacuum_vacuum_scale_factor   – fraction of table size that must
+    #                                      have changed before a vacuum runs.
+    #                                      Default 0.20 (20 %); we use 0.01
+    #                                      (1 %) so vacuums fire early on a
+    #                                      high-churn cache table.
+    #   autovacuum_analyze_scale_factor  – same threshold but for ANALYZE.
+    #   autovacuum_vacuum_cost_delay     – throttle between vacuum I/O bursts
+    #                                      (ms). 2 ms ≈ full-speed vacuum.
+    #   autovacuum_naptime               – how often the autovacuum daemon
+    #                                      wakes up and checks all tables.
+    #                                      Default 1 min; 30 s is fine for
+    #                                      a dedicated cache database.
+    command: >
+      postgres
+        -c autovacuum=on
+        -c autovacuum_naptime=30s
+        -c autovacuum_vacuum_scale_factor=0.01
+        -c autovacuum_analyze_scale_factor=0.01
+        -c autovacuum_vacuum_cost_delay=2
+        -c log_autovacuum_min_duration=0
+        -c shared_buffers=256MB
+        -c work_mem=8MB
+        -c maintenance_work_mem=64MB
+        -c max_connections=100
+        -c wal_level=minimal
+        -c max_wal_senders=0
+        -c synchronous_commit=off
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      # Persistent data volume so the cache survives container restarts.
+      - pg_data:/var/lib/postgresql/data
+      # Init scripts – executed once on first startup in lexicographic order.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          pg_isready -U ${POSTGRES_USER:-oidc_user} -d ${POSTGRES_DB:-oidc_cache}
+      interval: 10s
+      timeout:  5s
+      retries:  5
+      start_period: 15s
+
+    networks:
+      - oidc-net
+
+  # ── Nightly VACUUM cron ───────────────────────────────────────────────────────
+  #
+  # Why a separate service?
+  #   • PostgreSQL's built-in autovacuum handles *routine* dead-tuple reclaim,
+  #     but after a large expiry wave (e.g. midnight token expiry for thousands
+  #     of sessions) it can be overwhelmed.  A scheduled `VACUUM ANALYZE`
+  #     ensures the table stays compact and planner statistics stay accurate
+  #     regardless of autovacuum's backlog.
+  #   • Running the job inside a separate container keeps the postgres image
+  #     unchanged and avoids pg_cron extension installation complexity.
+  #   • The container uses `crond` from BusyBox (Alpine), consuming < 5 MB RAM
+  #     at idle.
+  vacuum-cron:
+    build:
+      context: ./vacuum-cron
+      dockerfile: Dockerfile
+    container_name: oidc-vacuum-cron
+    restart: unless-stopped
+
+    environment:
+      <<: *pg-env
+      PGHOST:          postgres
+      PGPORT:          5432
+      # Override cron schedule (default: every day at midnight UTC).
+      # Standard 5-field cron: minute hour dom month dow
+      VACUUM_SCHEDULE: ${VACUUM_SCHEDULE:-0 0 * * *}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    networks:
+      - oidc-net
+
+# ─── Named volumes ────────────────────────────────────────────────────────────
+volumes:
+  pg_data:
+    driver: local
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  oidc-net:
+    driver: bridge

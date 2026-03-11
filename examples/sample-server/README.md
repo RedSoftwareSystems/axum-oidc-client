@@ -35,11 +35,15 @@ Edit `.env` with your actual credentials.
 The cache backend is selected at **compile time** via a Cargo feature flag.
 Three modes are available:
 
-| Feature       | Cache type                    | External dependency |
-| ------------- | ----------------------------- | ------------------- |
-| `cache-l2`    | Redis only                    | Redis server        |
-| `cache-l1`    | Moka in-process only *(default)* | None             |
-| `cache-l1-l2` | Moka L1 + Redis L2 (two-tier) | Redis server        |
+| Feature       | Cache type                         | External dependency  |
+| ------------- | ---------------------------------- | -------------------- |
+| `cache-l2`    | Redis only                         | Redis server         |
+| `cache-l1`    | Moka in-process only *(default)*   | None                 |
+| `cache-l1-l2` | Moka L1 + Redis L2 (two-tier)      | Redis server         |
+| `cache-pg`    | PostgreSQL only                    | PostgreSQL ≥ 12      |
+| `cache-l1-pg` | Moka L1 + PostgreSQL L2 (two-tier) | PostgreSQL ≥ 12      |
+| `cache-sqlite`    | SQLite only                        | None (file-based)    |
+| `cache-l1-sqlite` | Moka L1 + SQLite L2 (two-tier)     | None (file-based)    |
 
 See [Cache Backends](#cache-backends) for full details.
 
@@ -57,6 +61,18 @@ cargo run --no-default-features --features cache-l2
 
 # Two-tier: Moka L1 + Redis L2
 cargo run --no-default-features --features cache-l1-l2
+
+# PostgreSQL only (start the Docker stack first — see below)
+cargo run --no-default-features --features cache-pg
+
+# Two-tier: Moka L1 + PostgreSQL L2 (recommended for production)
+cargo run --no-default-features --features cache-l1-pg
+
+# SQLite only (no external server required — file created automatically)
+cargo run --no-default-features --features cache-sqlite
+
+# Two-tier: Moka L1 + SQLite L2
+cargo run --no-default-features --features cache-l1-sqlite
 ```
 
 Or use environment variables directly:
@@ -72,6 +88,65 @@ OAUTH_CLIENT_ID=your-id OAUTH_CLIENT_SECRET=your-secret cargo run
 3. Authenticate with your provider
 4. Access protected routes
 5. Click "Logout" to end session
+
+---
+
+## PostgreSQL Quick Start (Docker)
+
+The fastest way to get a PostgreSQL 18 instance running locally is with the
+included Docker Compose stack.
+
+```bash
+# 1. Copy the postgres example env file
+cp .env.postgres.example .env.local
+
+# 2. Edit .env.local — fill in real OAuth2 credentials, keep the PG defaults
+#    (POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB / PG_URL)
+
+# 3. Start PostgreSQL 18 + the nightly vacuum-cron service
+make db-up
+# or: docker compose -f docker/docker-compose.postgres.yml up -d
+
+# 4. Run the server with the two-tier cache (Moka L1 + PG L2)
+make run-l1-pg
+# or: cargo run --no-default-features --features cache-l1-pg
+```
+
+The stack starts two services:
+
+| Service        | Purpose                                                           |
+| -------------- | ----------------------------------------------------------------- |
+| `postgres`     | PostgreSQL 18-alpine with autovacuum tuned for high-churn cache  |
+| `vacuum-cron`  | Alpine container that runs `VACUUM ANALYZE oidc_cache` at midnight |
+
+See [Docker Compose reference](#docker-compose-reference) for all make targets.
+
+---
+
+## SQLite Quick Start
+
+SQLite requires **no external server** — the cache database is a plain file on disk,
+created automatically by sqlx on first connection.
+
+```bash
+# 1. Copy the SQLite example env file
+cp .env.sqlite.example .env.local
+
+# 2. Edit .env.local — fill in real OAuth2 credentials.
+#    The SQLite defaults (SQLITE_URL=sqlite:///tmp/oidc_cache.db) work as-is.
+
+# 3. Run the server with the SQLite-only cache
+make run-sqlite
+# or: cargo run --no-default-features --features cache-sqlite
+
+# 4. (Optional) Run with the two-tier Moka L1 + SQLite L2 cache
+make run-l1-sqlite
+# or: cargo run --no-default-features --features cache-l1-sqlite
+```
+
+> **Tip:** For local development use `sqlite:///tmp/oidc_cache.db`.  To persist
+> the file across Docker container restarts, create the named volume first with
+> `make sqlite-up` and then set `SQLITE_URL=sqlite:////data/oidc_cache.db`.
 
 ---
 
@@ -140,6 +215,7 @@ L1_TTL_SEC=3600
 
 ### `cache-l1-l2` — Two-tier: Moka L1 + Redis L2
 
+
 Combines both tiers using a **cache-aside** pattern:
 
 | Operation      | L1 (Moka)                              | L2 (Redis)                     |
@@ -166,6 +242,288 @@ CACHE_TTL=3600
 L1_MAX_CAPACITY=10000
 L1_TTL_SEC=3600
 # L1_TIME_TO_IDLE_SEC=1800
+```
+
+### `cache-pg` — PostgreSQL only
+
+Stores all session data in a PostgreSQL database via `sqlx`.  Uses the
+[`SqlAuthCache`](../../src/sql_cache/mod.rs) backend with a background cleanup
+task that periodically deletes expired rows.  No Moka in-process layer.
+
+```bash
+cargo run --no-default-features --features cache-pg
+```
+
+**Additional CLI args / env vars:**
+
+| CLI argument                 | Environment variable     | Default                                              | Description                                |
+| ---------------------------- | ------------------------ | ---------------------------------------------------- | ------------------------------------------ |
+| `--pg-url`                   | `PG_URL`                 | `postgresql://oidc_user:oidc_pass@localhost:5432/oidc_cache` | PostgreSQL connection URL      |
+| `--pg-max-connections`       | `PG_MAX_CONNECTIONS`     | `20`                                                 | Connection pool max size                   |
+| `--pg-cleanup-interval-sec`  | `PG_CLEANUP_INTERVAL_SEC`| `300`                                                | Expired-row sweep interval (seconds)       |
+
+**`.env` snippet:**
+
+```env
+PG_URL=postgresql://oidc_user:oidc_pass@localhost:5432/oidc_cache
+PG_MAX_CONNECTIONS=20
+PG_CLEANUP_INTERVAL_SEC=300
+```
+
+**Schema initialisation** is performed automatically on startup via
+`SqlAuthCache::init_schema()` (`CREATE UNLOGGED TABLE IF NOT EXISTS oidc_cache …`).
+The table is idempotent — safe to call on every restart.
+
+### `cache-l1-pg` — Two-tier: Moka L1 + PostgreSQL L2 *(recommended for production)*
+
+Combines the low-latency Moka in-process cache with PostgreSQL as the durable
+L2 backend.  This is the best choice when you want:
+
+- Sub-millisecond session reads served from L1
+- Durable, crash-safe session persistence in PostgreSQL
+- Shared state across multiple application instances (via the shared PG database)
+
+| Operation      | L1 (Moka)                              | L2 (PostgreSQL)                  |
+| -------------- | -------------------------------------- | -------------------------------- |
+| **Read**       | Check first; on miss go to L2          | Read on L1 miss; populate L1     |
+| **Write**      | Write                                  | Write first (source of truth)    |
+| **Invalidate** | Remove                                 | Remove                           |
+| **Extend TTL** | Evict (re-fetched on next read)        | Update `expires_at`              |
+
+```bash
+cargo run --no-default-features --features cache-l1-pg
+```
+
+**Additional CLI args / env vars:** all of `cache-l1` plus all of `cache-pg`,
+and one additional L1 TTL override specific to the PG two-tier configuration:
+
+| CLI argument        | Environment variable | Default | Description                                               |
+| ------------------- | -------------------- | ------- | --------------------------------------------------------- |
+| `--pg-l1-ttl-sec`   | `PG_L1_TTL_SEC`      | `1800`  | Moka L1 TTL when used in front of PostgreSQL (seconds)    |
+
+**`.env` snippet:**
+
+```env
+# PostgreSQL (L2)
+PG_URL=postgresql://oidc_user:oidc_pass@localhost:5432/oidc_cache
+PG_MAX_CONNECTIONS=20
+PG_CLEANUP_INTERVAL_SEC=300
+
+# Moka (L1) — TTL should be <= session max-age
+L1_MAX_CAPACITY=10000
+PG_L1_TTL_SEC=1800
+# L1_TIME_TO_IDLE_SEC=900   # optional
+```
+
+### `cache-sqlite` — SQLite only
+
+Stores all session data in a local SQLite database file via `sqlx`.  Uses the
+[`SqlAuthCache`](../../src/sql_cache/mod.rs) backend with a background cleanup
+task that periodically deletes expired rows.  **No external server required.**
+
+```bash
+cargo run --no-default-features --features cache-sqlite
+```
+
+**Additional CLI args / env vars:**
+
+| CLI argument                    | Environment variable        | Default                        | Description                                 |
+| ------------------------------- | --------------------------- | ------------------------------ | ------------------------------------------- |
+| `--sqlite-url`                  | `SQLITE_URL`                | `sqlite:///tmp/oidc_cache.db`  | SQLite connection URL (file path or `:memory:`) |
+| `--sqlite-max-connections`      | `SQLITE_MAX_CONNECTIONS`    | `5`                            | Connection pool max size (keep ≤ 5)         |
+| `--sqlite-cleanup-interval-sec` | `SQLITE_CLEANUP_INTERVAL_SEC` | `300`                        | Expired-row sweep interval (seconds)        |
+
+**`.env` snippet:**
+
+```env
+SQLITE_URL=sqlite:///tmp/oidc_cache.db
+SQLITE_MAX_CONNECTIONS=5
+SQLITE_CLEANUP_INTERVAL_SEC=300
+```
+
+**SQLite URL formats:**
+
+| URL                                  | Description                                         |
+| ------------------------------------ | --------------------------------------------------- |
+| `sqlite:///tmp/oidc_cache.db`        | File at `/tmp/oidc_cache.db`                        |
+| `sqlite:////data/oidc_cache.db`      | Absolute path (four slashes) — use with Docker volume |
+| `sqlite://:memory:`                  | In-memory only (lost on restart — for testing)      |
+
+**Schema initialisation** is performed automatically on startup via
+`SqlAuthCache::init_schema()` (`CREATE TABLE IF NOT EXISTS oidc_cache …`).
+The table is idempotent — safe to call on every restart.
+
+### `cache-l1-sqlite` — Two-tier: Moka L1 + SQLite L2
+
+Combines the low-latency Moka in-process cache with SQLite as the durable L2
+backend.  This is the recommended choice when you want:
+
+- Sub-millisecond session reads served from L1
+- Durable session persistence in a lightweight file database
+- Zero infrastructure dependencies (no Redis, PostgreSQL, or MySQL required)
+
+| Operation      | L1 (Moka)                              | L2 (SQLite)                      |
+| -------------- | -------------------------------------- | -------------------------------- |
+| **Read**       | Check first; on miss go to L2          | Read on L1 miss; populate L1     |
+| **Write**      | Write                                  | Write first (source of truth)    |
+| **Invalidate** | Remove                                 | Remove                           |
+| **Extend TTL** | Evict (re-fetched on next read)        | Update `expires_at`              |
+
+> **Why L1 matters with SQLite:** SQLite serialises concurrent writes (only one
+> writer at a time).  The Moka L1 layer absorbs the vast majority of repeated
+> session reads, so SQLite only sees cold-miss lookups and write traffic.  This
+> eliminates writer contention even under high concurrency.
+
+```bash
+cargo run --no-default-features --features cache-l1-sqlite
+```
+
+**Additional CLI args / env vars:** all of `cache-l1` plus all of `cache-sqlite`, and one additional L1 TTL override:
+
+| CLI argument          | Environment variable | Default | Description                                               |
+| --------------------- | -------------------- | ------- | --------------------------------------------------------- |
+| `--sqlite-l1-ttl-sec` | `SQLITE_L1_TTL_SEC`  | `1800`  | Moka L1 TTL when used in front of SQLite (seconds)        |
+
+**`.env` snippet:**
+
+```env
+# SQLite (L2)
+SQLITE_URL=sqlite:///tmp/oidc_cache.db
+SQLITE_MAX_CONNECTIONS=5
+SQLITE_CLEANUP_INTERVAL_SEC=300
+
+# Moka (L1) — TTL should be <= session max-age
+L1_MAX_CAPACITY=10000
+SQLITE_L1_TTL_SEC=1800
+# L1_TIME_TO_IDLE_SEC=900   # optional
+```
+
+---
+
+## Docker Compose Reference
+
+The `docker/docker-compose.postgres.yml` stack provides a fully configured PostgreSQL 18
+environment for local development and CI.
+
+### Services
+
+#### `postgres` (PostgreSQL 18-alpine)
+
+- Exposes port `${POSTGRES_PORT:-5432}` on the host.
+- Data is persisted in the `pg_data` named Docker volume.
+- Init scripts in `docker/postgres/init/` run once on first startup:
+  - `01_oidc_cache.sql` — creates the `oidc_cache` UNLOGGED table, its index,
+    and applies aggressive per-table autovacuum storage parameters.
+- Runtime PostgreSQL parameters set via the `command:` key:
+
+  | Parameter                          | Value   | Reason                                           |
+  | ---------------------------------- | ------- | ------------------------------------------------ |
+  | `autovacuum`                       | `on`    | Global autovacuum left enabled for all tables    |
+  | `autovacuum_naptime`               | `30s`   | Daemon wakes every 30 s (default: 1 min)         |
+  | `autovacuum_vacuum_scale_factor`   | `0.01`  | Vacuum after 1 % change (default: 20 %)          |
+  | `autovacuum_analyze_scale_factor`  | `0.01`  | Analyze after 1 % change (default: 20 %)         |
+  | `autovacuum_vacuum_cost_delay`     | `2`     | Near full-speed vacuum I/O (ms)                  |
+  | `log_autovacuum_min_duration`      | `0`     | Log every autovacuum run (useful for tuning)     |
+  | `synchronous_commit`               | `off`   | Higher write throughput (safe for a cache)       |
+  | `wal_level`                        | `minimal` | Minimal WAL since replication is not used      |
+
+  Additionally, the `01_oidc_cache.sql` init script overrides storage
+  parameters on the `oidc_cache` table itself:
+
+  ```sql
+  ALTER TABLE oidc_cache SET (
+      autovacuum_vacuum_scale_factor  = 0.01,
+      autovacuum_analyze_scale_factor = 0.01,
+      autovacuum_vacuum_threshold     = 50,
+      autovacuum_analyze_threshold    = 50,
+      autovacuum_vacuum_cost_delay    = 2
+  );
+  ```
+
+  These per-table settings override the global GUC values **only** for
+  `oidc_cache`, leaving all other tables in the database unaffected.
+
+#### `vacuum-cron` (Alpine + BusyBox crond)
+
+A lightweight sidecar (~12 MB image) that runs a scheduled
+`VACUUM ANALYZE oidc_cache` job via BusyBox `crond`.
+
+- Schedule is controlled by `VACUUM_SCHEDULE` (default: `0 0 * * *` — every
+  day at **midnight UTC**).
+- Connects to PostgreSQL using credentials from the shared `pg-env` block; the
+  password is stored in `~/.pgpass` (mode 600) so it never appears in process
+  arguments or logs.
+- Before the job runs, the script logs the dead-tuple count.  After the job it
+  logs table size and statistics — all visible in `docker compose logs`.
+
+**Why supplement autovacuum with a scheduled job?**
+
+Autovacuum handles *routine* dead-tuple reclaim, but after large expiry waves
+(e.g. thousands of sessions expiring at once at midnight) the autovacuum daemon
+can fall behind.  A scheduled `VACUUM ANALYZE` ensures the table stays compact
+and planner statistics stay accurate regardless of autovacuum's backlog.
+
+### Compose environment variables
+
+All variables have sensible defaults; override in your `.env.local` file or as
+shell environment variables before running `docker compose`.
+
+| Variable            | Default        | Description                                           |
+| ------------------- | -------------- | ----------------------------------------------------- |
+| `POSTGRES_USER`     | `oidc_user`    | PostgreSQL superuser name                             |
+| `POSTGRES_PASSWORD` | `oidc_pass`    | PostgreSQL superuser password                         |
+| `POSTGRES_DB`       | `oidc_cache`   | Database name                                         |
+| `POSTGRES_PORT`     | `5432`         | Host-side port mapping                                |
+| `VACUUM_SCHEDULE`   | `0 0 * * *`    | 5-field cron expression for the nightly VACUUM job    |
+
+### Make targets (Docker)
+
+```bash
+make db-up        # Start the stack (builds vacuum-cron image if needed)
+make db-down      # Stop containers; preserve pg_data volume
+make db-destroy   # Stop containers AND delete pg_data volume (destructive!)
+make db-logs      # Follow logs from all services
+make db-ps        # Show service status
+make db-vacuum    # Run VACUUM ANALYZE manually (one-shot, useful for testing)
+make db-psql      # Open an interactive psql shell inside the postgres container
+```
+
+**To test the vacuum job without waiting until midnight:**
+
+```bash
+# Override the schedule to run every 5 minutes, then restart the stack
+VACUUM_SCHEDULE="*/5 * * * *" make db-up
+make db-logs   # watch the vacuum output
+```
+
+### SQLite Docker reference
+
+The `docker/docker-compose.sqlite.yml` file manages a `sqlite_data` named
+Docker volume so the database file persists across container and host restarts.
+No server process is started — SQLite is purely file-based.
+
+#### Make targets (SQLite Docker)
+
+```bash
+make sqlite-up       # Create the sqlite_data volume (run once before first use)
+make sqlite-down     # Stop the stack; volume is preserved
+make sqlite-destroy  # Remove the stack AND the sqlite_data volume (destructive!)
+make sqlite-logs     # Follow compose logs
+make sqlite-ps       # Show compose service status
+make sqlite-shell    # Open an interactive sqlite3 shell on oidc_cache.db
+```
+
+After running `make sqlite-up`, set the following in `.env.local`:
+
+```env
+SQLITE_URL=sqlite:////data/oidc_cache.db
+```
+
+Then start the server:
+
+```bash
+make run-sqlite      # SQLite-only cache
+make run-l1-sqlite   # Moka L1 + SQLite L2 (recommended)
 ```
 
 ---
@@ -366,6 +724,20 @@ cargo run --no-default-features --features cache-l1-l2 -- \
   --l1-max-capacity 10000 \
   --l1-ttl-sec 3600 \
   --l1-time-to-idle-sec 1800
+
+# PostgreSQL only
+cargo run --no-default-features --features cache-pg -- \
+  --client-id YOUR_ID --client-secret YOUR_SECRET \
+  --pg-url postgresql://oidc_user:oidc_pass@localhost:5432/oidc_cache \
+  --pg-max-connections 20
+
+# Two-tier (Moka L1 + PostgreSQL L2) — recommended for production
+cargo run --no-default-features --features cache-l1-pg -- \
+  --client-id YOUR_ID --client-secret YOUR_SECRET \
+  --pg-url postgresql://oidc_user:oidc_pass@localhost:5432/oidc_cache \
+  --pg-max-connections 20 \
+  --l1-max-capacity 10000 \
+  --pg-l1-ttl-sec 1800
 ```
 
 ### With OIDC Logout (Keycloak, Azure AD, Okta, Auth0)
@@ -387,6 +759,8 @@ cargo run -- \
 cargo run -- --help
 cargo run --no-default-features --features cache-l1 -- --help
 cargo run --no-default-features --features cache-l1-l2 -- --help
+cargo run --no-default-features --features cache-pg -- --help
+cargo run --no-default-features --features cache-l1-pg -- --help
 ```
 
 ---
@@ -411,17 +785,35 @@ make build FEATURES=cache-l1
 # Run
 make run-l2        # Redis only
 make run-l1        # Moka in-process only
-make run-l1-l2     # Two-tier
+make run-l1-l2     # Two-tier (Moka + Redis)
+make run-pg        # PostgreSQL only
+make run-l1-pg     # Two-tier (Moka + PostgreSQL)  ← recommended
 
 # Watch-run (requires cargo-watch)
 make dev-l2
 make dev-l1
 make dev-l1-l2
+make dev-pg
+make dev-l1-pg
 
 # Build only
 make build-l2
 make build-l1
 make build-l1-l2
+make build-pg
+make build-l1-pg
+```
+
+```bash
+# SQLite
+make run-sqlite      # SQLite only
+make run-l1-sqlite   # Two-tier (Moka + SQLite)  ← recommended for zero-infra prod
+
+make dev-sqlite
+make dev-l1-sqlite
+
+make build-sqlite
+make build-l1-sqlite
 ```
 
 ### Other useful targets
@@ -482,6 +874,33 @@ All CLI arguments can be set via environment variables:
 | `--l1-max-capacity`     | `L1_MAX_CAPACITY`     | `10000`   | Maximum entries held by Moka             |
 | `--l1-ttl-sec`          | `L1_TTL_SEC`          | `3600`    | Entry TTL in seconds                     |
 | `--l1-time-to-idle-sec` | `L1_TIME_TO_IDLE_SEC` | *(unset)* | Idle-eviction timeout; omit to disable   |
+
+### Cache — PostgreSQL (`cache-pg`, `cache-l1-pg`)
+
+| CLI argument                | Environment variable      | Default                                                      | Description                           |
+| --------------------------- | ------------------------- | ------------------------------------------------------------ | ------------------------------------- |
+| `--pg-url`                  | `PG_URL`                  | `postgresql://oidc_user:oidc_pass@localhost:5432/oidc_cache` | PostgreSQL connection URL             |
+| `--pg-max-connections`      | `PG_MAX_CONNECTIONS`      | `20`                                                         | Connection pool max size              |
+| `--pg-cleanup-interval-sec` | `PG_CLEANUP_INTERVAL_SEC` | `300`                                                        | Expired-row sweep interval (seconds)  |
+| `--pg-l1-ttl-sec`           | `PG_L1_TTL_SEC`           | `1800`                                                       | Moka L1 TTL when backed by PG (`cache-l1-pg` only) |
+
+### Cache — MySQL (`cache-mysql`, `cache-l1-mysql`)
+
+| CLI argument                  | Environment variable         | Default                                              | Description                                |
+| ----------------------------- | ---------------------------- | ---------------------------------------------------- | ------------------------------------------ |
+| `--mysql-url`                 | `MYSQL_URL`                  | `mysql://oidc_user:oidc_pass@localhost:3306/oidc_cache` | MySQL connection URL                    |
+| `--mysql-max-connections`     | `MYSQL_MAX_CONNECTIONS`      | `20`                                                 | Connection pool max size                   |
+| `--mysql-cleanup-interval-sec`| `MYSQL_CLEANUP_INTERVAL_SEC` | `300`                                                | Expired-row sweep interval (seconds)       |
+| `--mysql-l1-ttl-sec`          | `MYSQL_L1_TTL_SEC`           | `1800`                                               | Moka L1 TTL when backed by MySQL (`cache-l1-mysql` only) |
+
+### Cache — SQLite (`cache-sqlite`, `cache-l1-sqlite`)
+
+| CLI argument                    | Environment variable         | Default                        | Description                                              |
+| ------------------------------- | ---------------------------- | ------------------------------ | -------------------------------------------------------- |
+| `--sqlite-url`                  | `SQLITE_URL`                 | `sqlite:///tmp/oidc_cache.db`  | SQLite connection URL                                    |
+| `--sqlite-max-connections`      | `SQLITE_MAX_CONNECTIONS`     | `5`                            | Connection pool max size (keep ≤ 5)                      |
+| `--sqlite-cleanup-interval-sec` | `SQLITE_CLEANUP_INTERVAL_SEC`| `300`                          | Expired-row sweep interval (seconds)                     |
+| `--sqlite-l1-ttl-sec`           | `SQLITE_L1_TTL_SEC`          | `1800`                         | Moka L1 TTL when backed by SQLite (`cache-l1-sqlite` only) |
 
 ---
 
@@ -546,6 +965,28 @@ cargo run --no-default-features --features cache-l1 -- \
 cargo run --no-default-features --features cache-l1-l2 -- \
   --client-id test --client-secret test \
   --redis-url redis://127.0.0.1/
+
+# Start the Docker PostgreSQL stack and verify PG cache
+make db-up
+cargo run --no-default-features --features cache-pg -- \
+  --client-id test --client-secret test
+
+# Two-tier PG smoke test
+cargo run --no-default-features --features cache-l1-pg -- \
+  --client-id test --client-secret test
+
+# Manually trigger the vacuum job to verify it works
+make db-vacuum
+
+# SQLite smoke test — no Docker stack needed, just a temp file
+cargo run --no-default-features --features cache-sqlite -- \
+  --client-id test --client-secret test \
+  --sqlite-url sqlite:///tmp/oidc_cache_test.db
+
+# Two-tier SQLite smoke test
+cargo run --no-default-features --features cache-l1-sqlite -- \
+  --client-id test --client-secret test \
+  --sqlite-url sqlite:///tmp/oidc_cache_test.db
 ```
 
 ---
@@ -572,6 +1013,8 @@ provider.
 - If using `cache-l2` or `cache-l1-l2`: confirm Redis is running and
   `REDIS_URL` is correct
 - If using `cache-l1`: sessions are in-process only and lost on restart
+- If using `cache-pg` or `cache-l1-pg`: confirm PostgreSQL is running and
+  `PG_URL` is correct; check `make db-ps` to verify the Docker stack is healthy
 - Verify cookies are enabled in the browser
 - Check `PRIVATE_COOKIE_KEY` is set and consistent across restarts
 
@@ -581,10 +1024,31 @@ You ran `cargo build --no-default-features` without passing a `--features`
 flag.  Add one of:
 
 ```bash
---features cache-l2      # Redis only
---features cache-l1      # Moka in-process only
---features cache-l1-l2   # Two-tier
+--features cache-l2          # Redis only
+--features cache-l1          # Moka in-process only
+--features cache-l1-l2       # Two-tier (Moka + Redis)
+--features cache-pg          # PostgreSQL only
+--features cache-l1-pg       # Two-tier (Moka + PostgreSQL)
+--features cache-sqlite      # SQLite only
+--features cache-l1-sqlite   # Two-tier (Moka + SQLite)
 ```
+
+### PostgreSQL connection refused
+
+- Ensure the Docker Compose stack is running: `make db-ps`
+- Start it if needed: `make db-up`
+- Check that `PG_URL` matches the compose credentials (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT`)
+- Connect manually to verify: `make db-psql`
+
+### SQLite file not found / permission denied
+
+- Ensure the **parent directory** of `SQLITE_URL` exists and is writable.
+  SQLite creates the file but not its parent directories.
+- If using the Docker volume path (`sqlite:////data/oidc_cache.db`), run
+  `make sqlite-up` first to create the `sqlite_data` volume.
+- For in-memory testing use `SQLITE_URL=sqlite://:memory:` — no filesystem
+  access required.
+- SQLite does not require credentials — no username or password to configure.
 
 ### Logout Doesn't Work
 
@@ -609,14 +1073,25 @@ flag.  Add one of:
 
 ### Cache Recommendations for Production
 
-| Scenario                          | Recommended feature |
-| --------------------------------- | ------------------- |
-| Single instance, no Redis         | `cache-l1`          |
-| Single instance, Redis available  | `cache-l1-l2`       |
-| Multi-instance, shared state      | `cache-l2` or `cache-l1-l2` |
-| Development / testing             | `cache-l1` (no infrastructure needed) |
+| Scenario                                  | Recommended feature   |
+| ----------------------------------------- | --------------------- |
+| Single instance, no external backend      | `cache-l1`            |
+| Single instance, Redis available          | `cache-l1-l2`         |
+| Single instance, PostgreSQL available     | `cache-l1-pg`  ← **recommended** |
+| Single instance, no infrastructure        | `cache-l1-sqlite`             |
+| Multi-instance, shared state (Redis)      | `cache-l2` or `cache-l1-l2` |
+| Multi-instance, shared state (PostgreSQL) | `cache-pg` or `cache-l1-pg` |
+| Development / zero-infra testing          | `cache-sqlite` or `cache-l1-sqlite` |
 
-### Example Production `.env`
+**Why `cache-l1-pg` for single-instance production?**
+
+PostgreSQL gives you durable session persistence (sessions survive restarts),
+easy administration (`psql`, `pg_dump`), and a well-understood operational
+model.  The Moka L1 layer absorbs most reads so PostgreSQL sees minimal load.
+The included Docker Compose stack bundles a nightly `VACUUM ANALYZE` job to
+keep the `oidc_cache` table lean at zero operational overhead.
+
+### Example Production `.env` — PostgreSQL two-tier
 
 ```env
 # OAuth2
@@ -630,7 +1105,44 @@ OAUTH_CLIENT_SECRET=your-client-secret
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8080
 
-# Cache (two-tier example)
+# PostgreSQL cache (L2)
+PG_URL=postgresql://oidc_user:strongpassword@pg-host:5432/oidc_cache
+PG_MAX_CONNECTIONS=20
+PG_CLEANUP_INTERVAL_SEC=300
+
+# Moka L1 in front of PostgreSQL
+L1_MAX_CAPACITY=10000
+PG_L1_TTL_SEC=1800
+
+# Docker Compose (if using the bundled stack)
+POSTGRES_USER=oidc_user
+POSTGRES_PASSWORD=strongpassword
+POSTGRES_DB=oidc_cache
+POSTGRES_PORT=5432
+VACUUM_SCHEDULE=0 0 * * *
+```
+
+Run with:
+
+```bash
+cargo run --release --no-default-features --features cache-l1-pg
+```
+
+### Example Production `.env` — Redis two-tier
+
+```env
+# OAuth2
+OAUTH_REDIRECT_URI=https://yourapp.com/auth/callback
+POST_LOGOUT_REDIRECT_URI=https://yourapp.com
+PRIVATE_COOKIE_KEY=<generated-with-openssl-rand-base64-64>
+OAUTH_CLIENT_ID=your-client-id
+OAUTH_CLIENT_SECRET=your-client-secret
+
+# Server
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8080
+
+# Cache (two-tier Redis example)
 REDIS_URL=redis://redis-host:6379/
 CACHE_TTL=1800
 L1_MAX_CAPACITY=10000
@@ -652,6 +1164,11 @@ cargo run --release --no-default-features --features cache-l1-l2
 - [API Documentation](../../DOCUMENTATION.md) — Complete API reference
 - [Quick Reference](../../QUICK_REFERENCE.md) — Common patterns
 - [Provider Examples](../../PROVIDER_EXAMPLES.md) — Detailed provider configs
+- [`.env.postgres.example`](.env.postgres.example) — Full PostgreSQL + Docker configuration reference
+- [`docker/docker-compose.postgres.yml`](docker/docker-compose.postgres.yml) — PostgreSQL 18 + vacuum-cron stack
+- [`.env.sqlite.example`](.env.sqlite.example) — SQLite configuration reference
+- [`docker/docker-compose.sqlite.yml`](docker/docker-compose.sqlite.yml) — SQLite volume helper
+- [`docker/postgres/init/01_oidc_cache.sql`](docker/postgres/init/01_oidc_cache.sql) — Schema and autovacuum settings
 
 ## License
 

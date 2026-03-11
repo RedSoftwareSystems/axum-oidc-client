@@ -71,6 +71,7 @@
 //! - [`errors`]: Error types used throughout the library
 //! - [`redis`]: Redis-based cache implementation (requires `redis` feature)
 //! - [`cache`]: Two-tier cache combining Moka L1 with any L2 backend (requires `moka-cache` feature)
+//! - [`sql_cache`]: SQL database cache backend (requires `sql-cache-postgres`, `sql-cache-mysql`, or `sql-cache-sqlite` feature)
 //!
 //! ## Automatic ID Token and Access Token Refresh
 //!
@@ -117,6 +118,10 @@
 //! - `redis-rustls`: Enable Redis with rustls for TLS
 //! - `redis-native-tls`: Enable Redis with native-tls
 //! - `moka-cache`: Enable the two-tier in-memory L1 cache (Moka) wrapping any [`auth_cache::AuthCache`] L2 backend
+//! - `sql-cache-postgres`: Enable PostgreSQL cache backend via sqlx
+//! - `sql-cache-mysql`: Enable MySQL/MariaDB cache backend via sqlx
+//! - `sql-cache-sqlite`: Enable SQLite cache backend via sqlx
+//! - `sql-cache-all`: Enable all three SQL backends at once (useful for testing)
 //!
 //! ## Examples
 //!
@@ -140,3 +145,10 @@ pub mod redis;
 
 #[cfg(feature = "moka-cache")]
 pub mod cache;
+
+#[cfg(any(
+    feature = "sql-cache-postgres",
+    feature = "sql-cache-mysql",
+    feature = "sql-cache-sqlite",
+))]
+pub mod sql_cache;

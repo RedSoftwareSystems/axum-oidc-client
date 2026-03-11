@@ -2,7 +2,7 @@
 
 A comprehensive OAuth2/OIDC authentication library for Axum web applications with PKCE (Proof Key for Code Exchange) support and token auto refresh capabilities.
 
-[![Crates.io](https://img.shields.io/crates/v/axum-oidc-client.svg?version=0.2.1)](https://crates.io/crates/axum-oidc-client)
+[![Crates.io](https://img.shields.io/crates/v/axum-oidc-client.svg?version=0.3.0)](https://crates.io/crates/axum-oidc-client)
 [![Documentation](https://docs.rs/axum-oidc-client/badge.svg)](https://docs.rs/axum-oidc-client)
 [![License](https://img.shields.io/crates/l/axum-oidc-client.svg)](LICENSE)
 
@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.2.1"
+axum-oidc-client = "0.3.0"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -35,17 +35,30 @@ tokio = { version = "1", features = ["full"] }
 - `redis` - Enable Redis cache backend with default TLS
 - `redis-rustls` - Enable Redis with rustls for TLS
 - `redis-native-tls` - Enable Redis with native-tls
+- `sql-cache-postgres` - Enable PostgreSQL cache backend via sqlx
+- `sql-cache-mysql` - Enable MySQL/MariaDB cache backend via sqlx
+- `sql-cache-sqlite` - Enable SQLite cache backend via sqlx
+- `sql-cache-all` - Enable all three SQL backends at once (useful for testing)
 
 ```toml
 [dependencies]
 # Default: includes moka-cache feature
-axum-oidc-client = "0.2.1"
+axum-oidc-client = "0.3.0"
 
 # With Redis support
-axum-oidc-client = { version = "0.2.1", features = ["redis"] }
+axum-oidc-client = { version = "0.3.0", features = ["redis"] }
 
 # With Redis + two-tier cache (L1 Moka + L2 Redis)
-axum-oidc-client = { version = "0.2.1", features = ["moka-cache", "redis"] }
+axum-oidc-client = { version = "0.3.0", features = ["moka-cache", "redis"] }
+
+# With PostgreSQL cache backend
+axum-oidc-client = { version = "0.3.0", features = ["sql-cache-postgres"] }
+
+# With SQLite cache backend (great for development)
+axum-oidc-client = { version = "0.3.0", features = ["sql-cache-sqlite"] }
+
+# With Moka L1 + PostgreSQL L2 two-tier cache
+axum-oidc-client = { version = "0.3.0", features = ["moka-cache", "sql-cache-postgres"] }
 ```
 
 ## Quick Start
@@ -175,6 +188,145 @@ Refresh tokens are automatically:
 
 ### Core Modules
 
+#### `sql_cache`
+
+SQL database cache backend implementing `AuthCache` via [`sqlx`](https://crates.io/crates/sqlx). An alternative L2 backend to Redis — useful when you already run a SQL database and want to avoid an extra Redis dependency.
+
+**Supported databases:**
+
+| Feature               | Database         | Notes                                      |
+|-----------------------|------------------|--------------------------------------------|
+| `sql-cache-postgres`  | PostgreSQL       | Best for high-concurrency production use   |
+| `sql-cache-mysql`     | MySQL / MariaDB  | Good general-purpose option                |
+| `sql-cache-sqlite`    | SQLite           | Ideal for development / single-instance    |
+
+**Quick start (SQLite):**
+
+```rust
+use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
+use std::sync::Arc;
+
+let config = SqlCacheConfig {
+    connection_string: "sqlite://cache.db".to_string(),
+    ..Default::default()
+};
+
+let cache = Arc::new(SqlAuthCache::new(config).await?);
+cache.init_schema().await?; // creates table + index (idempotent)
+```
+
+**PostgreSQL with two-tier (Moka L1 + Postgres L2):**
+
+```rust
+use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+use axum_oidc_client::auth_cache::AuthCache;
+use std::sync::Arc;
+
+let sql = Arc::new(SqlAuthCache::new(SqlCacheConfig {
+    connection_string: "postgresql://user:pass@localhost/mydb".to_string(),
+    ..Default::default()
+}).await?);
+sql.init_schema().await?;
+
+let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
+    TwoTierAuthCache::new(Some(sql), TwoTierCacheConfig::default())?
+);
+```
+
+**Schema** (created by `init_schema()`, table name is configurable):
+
+```sql
+-- PostgreSQL
+CREATE UNLOGGED TABLE IF NOT EXISTS oidc_cache (
+    cache_key   VARCHAR(255) PRIMARY KEY,
+    cache_value TEXT         NOT NULL,
+    expires_at  BIGINT       NOT NULL  -- Unix timestamp (seconds)
+);
+CREATE INDEX IF NOT EXISTS idx_oidc_cache_expires ON oidc_cache (expires_at);
+
+-- MySQL / MariaDB and SQLite use a regular (logged) table.
+```
+
+> **PostgreSQL note:** The table is declared `UNLOGGED` because it holds ephemeral cache data
+> (PKCE code verifiers and auth sessions) that does not need to survive a crash or server restart.
+> `UNLOGGED` tables bypass WAL writes, giving significantly higher write throughput and lower I/O.
+> The trade-off — the table is truncated automatically on crash recovery — is acceptable for a
+> cache: on restart the application simply re-authenticates any affected sessions.
+
+**Key design points:**
+- **PostgreSQL** uses an `UNLOGGED TABLE` — no WAL writes, higher write throughput, lower I/O
+- Expired rows are never returned (reads include `AND expires_at > now` — lazy deletion)
+- A background Tokio task purges expired rows in batches of 1 000 rows at a configurable interval (default: every 5 minutes); stop it with `cache.shutdown().await`
+- Fully composable with `TwoTierAuthCache` as the L2 backend
+
+**PostgreSQL: VACUUM after bulk deletes (recommended):**
+
+PostgreSQL uses MVCC (Multi-Version Concurrency Control): a `DELETE` statement does not immediately
+free disk pages — it marks rows as "dead" tuples that are reclaimed only when a `VACUUM` pass runs
+over the table. On a high-churn cache table this can cause table bloat if dead tuples accumulate
+faster than `autovacuum` reclaims them.
+
+`autovacuum` (enabled by default in all modern PostgreSQL installations) will eventually reclaim
+dead tuples automatically, but for a dedicated cache table with high write/delete throughput it is
+good practice to tune it aggressively and/or schedule a manual `VACUUM`.
+
+*1. Tune `autovacuum` per-table (run once after `init_schema`, idempotent):*
+
+```sql
+ALTER TABLE oidc_cache SET (
+    autovacuum_vacuum_scale_factor  = 0.01,  -- vacuum after 1 % of rows change (default: 20 %)
+    autovacuum_analyze_scale_factor = 0.01,  -- analyze after 1 % of rows change (default: 10 %)
+    autovacuum_vacuum_cost_delay    = 2       -- ms; lower = faster vacuum at the cost of more I/O
+);
+```
+
+*2. Manual `VACUUM` forms — choose the right one for your situation:*
+
+```sql
+-- Standard: reclaim dead tuples without locking the table. Safe for production.
+VACUUM oidc_cache;
+
+-- Recommended for scheduled maintenance: also refreshes planner statistics.
+VACUUM ANALYZE oidc_cache;
+
+-- Full rewrite: maximum space reclamation, but takes an ACCESS EXCLUSIVE lock.
+-- Only use during a maintenance window when no live traffic hits the cache.
+VACUUM FULL oidc_cache;
+```
+
+*3. Schedule via system cron (outside the database):*
+
+```text
+# Run VACUUM ANALYZE on the cache table every night at 03:00.
+0 3 * * *  psql -U myuser -d mydb -c "VACUUM ANALYZE oidc_cache;"
+```
+
+*4. Schedule via `pg_cron` (entirely inside PostgreSQL — no external cron needed):*
+
+```sql
+-- Install the extension once per database cluster (superuser required).
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Schedule VACUUM ANALYZE every night at 03:00 server time.
+SELECT cron.schedule(
+    'vacuum-oidc-cache',         -- unique job name
+    '0 3 * * *',                 -- standard cron expression
+    'VACUUM ANALYZE oidc_cache'  -- SQL statement to execute
+);
+
+-- Inspect scheduled jobs.
+SELECT * FROM cron.job;
+
+-- Remove the job when it is no longer needed.
+SELECT cron.unschedule('vacuum-oidc-cache');
+```
+
+> **Note:** Because the cache table is declared `UNLOGGED`, PostgreSQL already skips WAL writes
+> for all DML. `VACUUM` itself is not WAL-logged either, so the combination of `UNLOGGED` +
+> regular `VACUUM` gives the best trade-off between write performance, storage efficiency, and
+> query-planner accuracy.
+
 #### `cache`
 
 Two-tier authentication cache combining a fast in-process [Moka](https://crates.io/crates/moka) L1 cache with any `AuthCache` implementation as the L2 backend (requires `moka-cache` feature, **enabled by default**).
@@ -263,6 +415,7 @@ pub trait AuthCache {
 
 - `cache::TwoTierAuthCache` - Two-tier cache: fast in-process Moka L1 + any `AuthCache` as L2 backend (requires `moka-cache` feature, **enabled by default**)
 - `redis::AuthCache` - Redis-backed cache (requires `redis` feature)
+- `sql_cache::SqlAuthCache` - SQL-backed cache supporting PostgreSQL, MySQL, and SQLite (requires `sql-cache-*` feature)
 
 **Custom Implementation:**
 
@@ -781,6 +934,7 @@ cargo test
 # Run with specific features
 cargo test --features redis
 cargo test --features moka-cache
+cargo test --features sql-cache-sqlite
 cargo test --all-features
 
 # Run example
