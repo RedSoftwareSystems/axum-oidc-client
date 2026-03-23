@@ -81,8 +81,11 @@ services:
     #                                    boost at the cost of up to 1 s of
     #                                    transactions on a hard crash.
     #
-    #   innodb_log_file_size           – larger redo log reduces checkpoint
+    #   innodb_redo_log_capacity       – total redo log capacity in bytes.
+    #                                    128 MiB (134217728) reduces checkpoint
     #                                    frequency for write-heavy workloads.
+    #                                    Replaces the deprecated innodb_log_file_size
+    #                                    / innodb_log_files_in_group pair (MySQL 8.0.30+).
     #
     #   innodb_purge_threads           – number of threads that process the
     #                                    InnoDB purge (reclaiming undo log
@@ -101,14 +104,21 @@ services:
     #                                    Required for OPTIMIZE TABLE to actually
     #                                    shrink the on-disk footprint.
     #
-    #   slow_query_log / long_query_time – log queries slower than 1 second to
-    #                                    stdout so `docker logs` surfaces them.
+    #   slow_query_log / long_query_time – log queries slower than 1 second.
+    #                                    log-output=TABLE writes to the
+    #                                    mysql.slow_log table instead of a file,
+    #                                    avoiding the /dev/stdout issue where
+    #                                    MySQL 8 cannot open that path inside Docker.
+    #
+    #   authentication-policy          – replaces the deprecated
+    #                                    default-authentication-plugin option
+    #                                    (removed in MySQL 8.4).
     #
     #   character-set-server / collation-server – utf8mb4 ensures cache keys
     #                                    with arbitrary Unicode content are
     #                                    stored correctly.
     command: >
-      --innodb-buffer-pool-size=256M --innodb-flush-log-at-trx-commit=2 --innodb-log-file-size=128M --innodb-purge-threads=4 --innodb-max-purge-lag=0 --innodb-file-per-table=ON --slow-query-log=ON --slow-query-log-file=/dev/stdout --long-query-time=1 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password --max-connections=200
+      --innodb-buffer-pool-size=256M --innodb-flush-log-at-trx-commit=2 --innodb-redo-log-capacity=134217728 --innodb-purge-threads=4 --innodb-max-purge-lag=0 --innodb-file-per-table=ON --slow-query-log=ON --log-output=TABLE --long-query-time=1 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --authentication-policy=mysql_native_password --max-connections=200
 
     ports:
       - "${MYSQL_PORT:-3306}:3306"
@@ -121,14 +131,7 @@ services:
       - ./mysql/init:/docker-entrypoint-initdb.d:ro
 
     healthcheck:
-      test:
-        - CMD-SHELL
-        - |
-          mysqladmin ping
-            --host=127.0.0.1
-            --user=${MYSQL_USER:-oidc_user}
-            --password=${MYSQL_PASSWORD:-oidc_pass}
-            --silent
+      test: [ "CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=${MYSQL_USER:-oidc_user}", "--password=${MYSQL_PASSWORD:-oidc_pass}", "--silent" ]
       interval: 10s
       timeout: 5s
       retries: 10
