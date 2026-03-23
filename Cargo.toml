@@ -39,6 +39,10 @@ tracing = { version = "0.1" }
 # The runtime is always tokio; the database driver is selected per feature.
 sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "chrono"] }
 
+[dev-dependencies]
+mockito = "1"
+tempfile = "3"
+
 [features]
 default = ["moka-cache"]
 moka-cache = ["dep:moka"]

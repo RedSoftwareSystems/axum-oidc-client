@@ -63,6 +63,8 @@ use http::request::Parts;
 use pkce_std::Method;
 use reqwest::Client;
 
+use crate::http_client::build_http_client;
+
 use std::{
     fmt::Display,
     sync::Arc,
@@ -370,18 +372,8 @@ impl AuthLayer {
         logout_handler: Arc<dyn LogoutHandler>,
     ) -> Self {
         let oauth_client = Arc::new(
-            match configuration.custom_ca_cert.clone() {
-                Some(custom_ca_cert) => {
-                    let cert = std::fs::read(custom_ca_cert).unwrap();
-                    let cert = reqwest::Certificate::from_pem(&cert).unwrap();
-                    reqwest::ClientBuilder::new()
-                        .add_root_certificate(cert)
-                        .use_rustls_tls()
-                }
-                None => reqwest::ClientBuilder::new(),
-            }
-            .build()
-            .unwrap(),
+            build_http_client(configuration.custom_ca_cert.as_deref())
+                .expect("failed to build HTTP client"),
         );
         Self {
             configuration,

@@ -134,6 +134,7 @@ mod auth_router;
 pub mod auth_session;
 pub mod errors;
 pub mod extractors;
+pub mod http_client;
 pub mod logout;
 
 #[cfg(any(
