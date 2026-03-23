@@ -5,7 +5,7 @@
 #   postgres   – PostgreSQL 18 with autovacuum aggressively tuned for the
 #                `oidc_cache` table (high-churn ephemeral PKCE/session data).
 #
-#   vacuum-cron – A lightweight Alpine-based container that runs a
+#   pg-vacuum-cron – A lightweight Alpine-based container that runs a
 #                 `VACUUM ANALYZE oidc_cache` job every day at midnight
 #                 (00:00 server time, UTC by default).  This supplements
 #                 autovacuum by reclaiming dead tuples after large expiry
@@ -30,9 +30,9 @@ name: axum-oidc-sample
 
 # ─── Shared defaults ──────────────────────────────────────────────────────────
 x-pg-env: &pg-env
-  POSTGRES_USER:     ${POSTGRES_USER:-oidc_user}
+  POSTGRES_USER: ${POSTGRES_USER:-oidc_user}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oidc_pass}
-  POSTGRES_DB:       ${POSTGRES_DB:-oidc_cache}
+  POSTGRES_DB: ${POSTGRES_DB:-oidc_cache}
 
 services:
 
@@ -96,8 +96,8 @@ services:
         - |
           pg_isready -U ${POSTGRES_USER:-oidc_user} -d ${POSTGRES_DB:-oidc_cache}
       interval: 10s
-      timeout:  5s
-      retries:  5
+      timeout: 5s
+      retries: 5
       start_period: 15s
 
     networks:
@@ -115,17 +115,17 @@ services:
   #     unchanged and avoids pg_cron extension installation complexity.
   #   • The container uses `crond` from BusyBox (Alpine), consuming < 5 MB RAM
   #     at idle.
-  vacuum-cron:
+  pg-vacuum-cron:
     build:
-      context: ./vacuum-cron
+      context: ./pg-vacuum-cron
       dockerfile: Dockerfile
-    container_name: oidc-vacuum-cron
+    container_name: oidc-pg-vacuum-cron
     restart: unless-stopped
 
     environment:
       <<: *pg-env
-      PGHOST:          postgres
-      PGPORT:          5432
+      PGHOST: postgres
+      PGPORT: 5432
       # Override cron schedule (default: every day at midnight UTC).
       # Standard 5-field cron: minute hour dom month dow
       VACUUM_SCHEDULE: ${VACUUM_SCHEDULE:-0 0 * * *}

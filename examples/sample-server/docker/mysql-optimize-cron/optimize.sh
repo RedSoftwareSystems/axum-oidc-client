@@ -1,7 +1,7 @@
 #!/bin/sh
 # optimize.sh
 # ──────────────────────────────────────────────────────────────────────────────
-# Scheduled maintenance script executed by crond inside the optimize-cron
+# Scheduled maintenance script executed by crond inside the mysql-optimize-cron
 # container.
 #
 # What it does
@@ -53,12 +53,12 @@ MYSQL_PORT_INNER="${MYSQL_PORT_INNER:-3306}"
 TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 echo "==================================================================="
-echo "[optimize-cron] ${TIMESTAMP} — starting OPTIMIZE + ANALYZE oidc_cache"
+echo "[mysql-optimize-cron] ${TIMESTAMP} — starting OPTIMIZE + ANALYZE oidc_cache"
 echo "  host: ${MYSQL_HOST}:${MYSQL_PORT_INNER}  db: ${MYSQL_DATABASE}  user: ${MYSQL_USER}"
 echo "==================================================================="
 
 # ── Before stats ──────────────────────────────────────────────────────────────
-echo "[optimize-cron] Table status BEFORE maintenance:"
+echo "[mysql-optimize-cron] Table status BEFORE maintenance:"
 mysql \
     --database="${MYSQL_DATABASE}" \
     --batch \
@@ -92,7 +92,7 @@ ORDER BY index_name, stat_name;
 # and rebuilds all secondary indexes.
 # Equivalent to: ALTER TABLE oidc_cache ENGINE=InnoDB;
 # Returns a result set — capture it so it appears in the log.
-echo "[optimize-cron] Running OPTIMIZE TABLE oidc_cache ..."
+echo "[mysql-optimize-cron] Running OPTIMIZE TABLE oidc_cache ..."
 mysql \
     --database="${MYSQL_DATABASE}" \
     --batch \
@@ -102,14 +102,14 @@ mysql \
 # Refreshes index statistics used by the InnoDB query optimiser.
 # Should always be run after OPTIMIZE TABLE because the rebuild changes the
 # internal page layout and row counts.
-echo "[optimize-cron] Running ANALYZE TABLE oidc_cache ..."
+echo "[mysql-optimize-cron] Running ANALYZE TABLE oidc_cache ..."
 mysql \
     --database="${MYSQL_DATABASE}" \
     --batch \
     --execute="ANALYZE TABLE oidc_cache;"
 
 # ── After stats ───────────────────────────────────────────────────────────────
-echo "[optimize-cron] Table status AFTER maintenance:"
+echo "[mysql-optimize-cron] Table status AFTER maintenance:"
 mysql \
     --database="${MYSQL_DATABASE}" \
     --batch \
@@ -133,9 +133,9 @@ EXIT_CODE=$?
 DONE_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 if [ "${EXIT_CODE}" -eq 0 ]; then
-    echo "[optimize-cron] ${DONE_TIMESTAMP} — OPTIMIZE + ANALYZE completed successfully (exit 0)"
+    echo "[mysql-optimize-cron] ${DONE_TIMESTAMP} — OPTIMIZE + ANALYZE completed successfully (exit 0)"
 else
-    echo "[optimize-cron] ${DONE_TIMESTAMP} — OPTIMIZE + ANALYZE FAILED (exit ${EXIT_CODE})" >&2
+    echo "[mysql-optimize-cron] ${DONE_TIMESTAMP} — OPTIMIZE + ANALYZE FAILED (exit ${EXIT_CODE})" >&2
 fi
 
 exit "${EXIT_CODE}"

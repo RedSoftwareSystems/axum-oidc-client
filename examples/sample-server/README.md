@@ -103,8 +103,8 @@ cp .env.postgres.example .env.local
 # 2. Edit .env.local — fill in real OAuth2 credentials, keep the PG defaults
 #    (POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB / PG_URL)
 
-# 3. Start PostgreSQL 18 + the nightly vacuum-cron service
-make db-up
+# 3. Start PostgreSQL 18 + the nightly pg-vacuum-cron service
+make pg-up
 # or: docker compose -f docker/docker-compose.postgres.yml up -d
 
 # 4. Run the server with the two-tier cache (Moka L1 + PG L2)
@@ -117,7 +117,7 @@ The stack starts two services:
 | Service        | Purpose                                                           |
 | -------------- | ----------------------------------------------------------------- |
 | `postgres`     | PostgreSQL 18-alpine with autovacuum tuned for high-churn cache  |
-| `vacuum-cron`  | Alpine container that runs `VACUUM ANALYZE oidc_cache` at midnight |
+| `pg-vacuum-cron`  | Alpine container that runs `VACUUM ANALYZE oidc_cache` at midnight |
 
 See [Docker Compose reference](#docker-compose-reference) for all make targets.
 
@@ -443,7 +443,7 @@ environment for local development and CI.
   These per-table settings override the global GUC values **only** for
   `oidc_cache`, leaving all other tables in the database unaffected.
 
-#### `vacuum-cron` (Alpine + BusyBox crond)
+#### `pg-vacuum-cron` (Alpine + BusyBox crond)
 
 A lightweight sidecar (~12 MB image) that runs a scheduled
 `VACUUM ANALYZE oidc_cache` job via BusyBox `crond`.
@@ -479,21 +479,21 @@ shell environment variables before running `docker compose`.
 ### Make targets (Docker)
 
 ```bash
-make db-up        # Start the stack (builds vacuum-cron image if needed)
-make db-down      # Stop containers; preserve pg_data volume
-make db-destroy   # Stop containers AND delete pg_data volume (destructive!)
-make db-logs      # Follow logs from all services
-make db-ps        # Show service status
-make db-vacuum    # Run VACUUM ANALYZE manually (one-shot, useful for testing)
-make db-psql      # Open an interactive psql shell inside the postgres container
+make pg-up        # Start the stack (builds pg-vacuum-cron image if needed)
+make pg-down      # Stop containers; preserve pg_data volume
+make pg-destroy   # Stop containers AND delete pg_data volume (destructive!)
+make pg-logs      # Follow logs from all services
+make pg-ps        # Show service status
+make pg-vacuum    # Run VACUUM ANALYZE manually (one-shot, useful for testing)
+make pg-psql      # Open an interactive psql shell inside the postgres container
 ```
 
 **To test the vacuum job without waiting until midnight:**
 
 ```bash
 # Override the schedule to run every 5 minutes, then restart the stack
-VACUUM_SCHEDULE="*/5 * * * *" make db-up
-make db-logs   # watch the vacuum output
+VACUUM_SCHEDULE="*/5 * * * *" make pg-up
+make pg-logs   # watch the vacuum output
 ```
 
 ### SQLite Docker reference
@@ -967,7 +967,7 @@ cargo run --no-default-features --features cache-l1-l2 -- \
   --redis-url redis://127.0.0.1/
 
 # Start the Docker PostgreSQL stack and verify PG cache
-make db-up
+make pg-up
 cargo run --no-default-features --features cache-pg -- \
   --client-id test --client-secret test
 
@@ -976,7 +976,7 @@ cargo run --no-default-features --features cache-l1-pg -- \
   --client-id test --client-secret test
 
 # Manually trigger the vacuum job to verify it works
-make db-vacuum
+make pg-vacuum
 
 # SQLite smoke test — no Docker stack needed, just a temp file
 cargo run --no-default-features --features cache-sqlite -- \
@@ -1014,7 +1014,7 @@ provider.
   `REDIS_URL` is correct
 - If using `cache-l1`: sessions are in-process only and lost on restart
 - If using `cache-pg` or `cache-l1-pg`: confirm PostgreSQL is running and
-  `PG_URL` is correct; check `make db-ps` to verify the Docker stack is healthy
+  `PG_URL` is correct; check `make pg-ps` to verify the Docker stack is healthy
 - Verify cookies are enabled in the browser
 - Check `PRIVATE_COOKIE_KEY` is set and consistent across restarts
 
@@ -1035,10 +1035,10 @@ flag.  Add one of:
 
 ### PostgreSQL connection refused
 
-- Ensure the Docker Compose stack is running: `make db-ps`
-- Start it if needed: `make db-up`
+- Ensure the Docker Compose stack is running: `make pg-ps`
+- Start it if needed: `make pg-up`
 - Check that `PG_URL` matches the compose credentials (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT`)
-- Connect manually to verify: `make db-psql`
+- Connect manually to verify: `make pg-psql`
 
 ### SQLite file not found / permission denied
 
@@ -1165,7 +1165,7 @@ cargo run --release --no-default-features --features cache-l1-l2
 - [Quick Reference](../../QUICK_REFERENCE.md) — Common patterns
 - [Provider Examples](../../PROVIDER_EXAMPLES.md) — Detailed provider configs
 - [`.env.postgres.example`](.env.postgres.example) — Full PostgreSQL + Docker configuration reference
-- [`docker/docker-compose.postgres.yml`](docker/docker-compose.postgres.yml) — PostgreSQL 18 + vacuum-cron stack
+- [`docker/docker-compose.postgres.yml`](docker/docker-compose.postgres.yml) — PostgreSQL 18 + pg-vacuum-cron stack
 - [`.env.sqlite.example`](.env.sqlite.example) — SQLite configuration reference
 - [`docker/docker-compose.sqlite.yml`](docker/docker-compose.sqlite.yml) — SQLite volume helper
 - [`docker/postgres/init/01_oidc_cache.sql`](docker/postgres/init/01_oidc_cache.sql) — Schema and autovacuum settings

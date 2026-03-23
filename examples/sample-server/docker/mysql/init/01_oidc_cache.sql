@@ -57,7 +57,7 @@
 --     the idx_oidc_cache_expires index for cleanup and TTL-filtered reads
 --     after the row distribution has shifted significantly.
 --
--- The companion `optimize-cron` Docker Compose service runs both statements
+-- The companion `mysql-optimize-cron` Docker Compose service runs both statements
 -- every day at midnight (configurable via OPTIMIZE_SCHEDULE).
 
 -- ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ CREATE INDEX idx_oidc_cache_expires ON oidc_cache (expires_at);
 -- ---------------------------------------------------------------------------
 
 -- Run ANALYZE TABLE immediately so the optimiser has accurate statistics from
--- the very first query, without waiting for the nightly optimize-cron job.
+-- the very first query, without waiting for the nightly mysql-optimize-cron job.
 ANALYZE TABLE oidc_cache;
 
 -- ---------------------------------------------------------------------------

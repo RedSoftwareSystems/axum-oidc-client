@@ -97,16 +97,16 @@ help:
 	@echo ""
 	@echo ""
 	@echo -e "$(YELLOW)Docker (PostgreSQL):$(NC)"
-	@echo "  make db-up           - Start the PostgreSQL 18 + vacuum-cron stack"
-	@echo "  make db-down         - Stop and remove containers (data volume preserved)"
-	@echo "  make db-destroy      - Stop containers AND delete the pg_data volume"
-	@echo "  make db-logs         - Follow logs from all Docker Compose services"
-	@echo "  make db-ps           - Show status of Docker Compose services"
-	@echo "  make db-vacuum       - Run VACUUM ANALYZE manually (one-shot)"
-	@echo "  make db-psql         - Open a psql shell inside the postgres container"
+	@echo "  make pg-up           - Start the PostgreSQL 18 + pg-vacuum-cron stack"
+	@echo "  make pg-down         - Stop and remove containers (data volume preserved)"
+	@echo "  make pg-destroy      - Stop containers AND delete the pg_data volume"
+	@echo "  make pg-logs         - Follow logs from all Docker Compose services"
+	@echo "  make pg-ps           - Show status of Docker Compose services"
+	@echo "  make pg-vacuum       - Run VACUUM ANALYZE manually (one-shot)"
+	@echo "  make pg-psql         - Open a psql shell inside the postgres container"
 	@echo ""
 	@echo -e "$(YELLOW)Docker (MySQL):$(NC)"
-	@echo "  make mysql-up        - Start the MySQL 8 + optimize-cron stack"
+	@echo "  make mysql-up        - Start the MySQL 8 + mysql-optimize-cron stack"
 	@echo "  make mysql-down      - Stop and remove containers (data volume preserved)"
 	@echo "  make mysql-destroy   - Stop containers AND delete the mysql_data volume"
 	@echo "  make mysql-logs      - Follow logs from all MySQL Compose services"
@@ -376,46 +376,46 @@ build-l1-sqlite:
 
 # ── Docker / PostgreSQL targets ────────────────────────────────────────────────
 
-## Start the PostgreSQL 18 + vacuum-cron Docker Compose stack.
+## Start the PostgreSQL 18 + pg-vacuum-cron Docker Compose stack.
 ## On first run this creates the pg_data volume and runs the init SQL scripts.
-.PHONY: db-up
-db-up:
-	@echo -e "$(GREEN)Starting PostgreSQL 18 + vacuum-cron stack...$(NC)"
+.PHONY: pg-up
+pg-up:
+	@echo -e "$(GREEN)Starting PostgreSQL 18 + pg-vacuum-cron stack...$(NC)"
 	@if [ -f $(ENV_FILE) ]; then \
 		docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE) up -d --build; \
 	else \
 		docker compose -f $(COMPOSE_FILE) up -d --build; \
 	fi
 	@echo -e "$(GREEN)✓ Stack started. PostgreSQL available on port $${POSTGRES_PORT:-5432}$(NC)"
-	@echo -e "$(YELLOW)  Run 'make db-logs' to follow service logs$(NC)"
+	@echo -e "$(YELLOW)  Run 'make pg-logs' to follow service logs$(NC)"
 
 ## Stop the stack but preserve the pg_data volume.
-.PHONY: db-down
-db-down:
+.PHONY: pg-down
+pg-down:
 	@echo -e "$(YELLOW)Stopping Docker Compose stack (data volume preserved)...$(NC)"
 	@docker compose -f $(COMPOSE_FILE) down
 	@echo -e "$(GREEN)✓ Stack stopped$(NC)"
 
 ## Stop the stack AND delete the pg_data volume (destructive — all cache data lost).
-.PHONY: db-destroy
-db-destroy:
+.PHONY: pg-destroy
+pg-destroy:
 	@echo -e "$(RED)Destroying Docker Compose stack AND pg_data volume...$(NC)"
 	@docker compose -f $(COMPOSE_FILE) down --volumes
 	@echo -e "$(GREEN)✓ Stack and volumes removed$(NC)"
 
 ## Follow logs from all Compose services (Ctrl-C to stop).
-.PHONY: db-logs
-db-logs:
+.PHONY: pg-logs
+pg-logs:
 	@docker compose -f $(COMPOSE_FILE) logs --follow
 
 ## Show the status of all Compose services.
-.PHONY: db-ps
-db-ps:
+.PHONY: pg-ps
+pg-ps:
 	@docker compose -f $(COMPOSE_FILE) ps
 
 ## Run a one-shot VACUUM ANALYZE on oidc_cache (useful for testing/debugging).
-.PHONY: db-vacuum
-db-vacuum:
+.PHONY: pg-vacuum
+pg-vacuum:
 	@echo -e "$(BLUE)Running manual VACUUM ANALYZE oidc_cache...$(NC)"
 	@docker compose -f $(COMPOSE_FILE) exec postgres \
 		psql \
@@ -425,8 +425,8 @@ db-vacuum:
 	@echo -e "$(GREEN)✓ VACUUM ANALYZE complete$(NC)"
 
 ## Open an interactive psql shell inside the postgres container.
-.PHONY: db-psql
-db-psql:
+.PHONY: pg-psql
+pg-psql:
 	@docker compose -f $(COMPOSE_FILE) exec postgres \
 		psql \
 			--username="$${POSTGRES_USER:-oidc_user}" \
@@ -434,11 +434,11 @@ db-psql:
 
 # ── Docker / MySQL targets ─────────────────────────────────────────────────────
 
-## Start the MySQL 8 + optimize-cron Docker Compose stack.
+## Start the MySQL 8 + mysql-optimize-cron Docker Compose stack.
 ## On first run this creates the mysql_data volume and runs the init SQL scripts.
 .PHONY: mysql-up
 mysql-up:
-	@echo -e "$(GREEN)Starting MySQL 8 + optimize-cron stack...$(NC)"
+	@echo -e "$(GREEN)Starting MySQL 8 + mysql-optimize-cron stack...$(NC)"
 	@if [ -f $(ENV_FILE) ]; then \
 		docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE_MYSQL) up -d --build; \
 	else \

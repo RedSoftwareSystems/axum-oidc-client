@@ -5,7 +5,7 @@
 #   mysql        – MySQL 8.0 with InnoDB tuned for a high-churn ephemeral
 #                  cache table (small rows, heavy INSERT/DELETE traffic).
 #
-#   optimize-cron – A lightweight Alpine-based container that runs
+#   mysql-optimize-cron – A lightweight Alpine-based container that runs
 #                   `OPTIMIZE TABLE oidc_cache` and `ANALYZE TABLE oidc_cache`
 #                   every day at midnight (UTC by default).
 #
@@ -44,9 +44,9 @@ name: axum-oidc-mysql
 
 # ─── Shared environment block ─────────────────────────────────────────────────
 x-mysql-env: &mysql-env
-  MYSQL_USER:          ${MYSQL_USER:-oidc_user}
-  MYSQL_PASSWORD:      ${MYSQL_PASSWORD:-oidc_pass}
-  MYSQL_DATABASE:      ${MYSQL_DATABASE:-oidc_cache}
+  MYSQL_USER: ${MYSQL_USER:-oidc_user}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:-oidc_pass}
+  MYSQL_DATABASE: ${MYSQL_DATABASE:-oidc_cache}
 
 services:
 
@@ -108,19 +108,7 @@ services:
     #                                    with arbitrary Unicode content are
     #                                    stored correctly.
     command: >
-      --innodb-buffer-pool-size=256M
-      --innodb-flush-log-at-trx-commit=2
-      --innodb-log-file-size=128M
-      --innodb-purge-threads=4
-      --innodb-max-purge-lag=0
-      --innodb-file-per-table=ON
-      --slow-query-log=ON
-      --slow-query-log-file=/dev/stdout
-      --long-query-time=1
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
-      --default-authentication-plugin=mysql_native_password
-      --max-connections=200
+      --innodb-buffer-pool-size=256M --innodb-flush-log-at-trx-commit=2 --innodb-log-file-size=128M --innodb-purge-threads=4 --innodb-max-purge-lag=0 --innodb-file-per-table=ON --slow-query-log=ON --slow-query-log-file=/dev/stdout --long-query-time=1 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password --max-connections=200
 
     ports:
       - "${MYSQL_PORT:-3306}:3306"
@@ -142,8 +130,8 @@ services:
             --password=${MYSQL_PASSWORD:-oidc_pass}
             --silent
       interval: 10s
-      timeout:  5s
-      retries:  10
+      timeout: 5s
+      retries: 10
       start_period: 30s
 
     networks:
@@ -159,20 +147,20 @@ services:
   #     and can be restarted or rescheduled independently of the database.
   #   • OPTIMIZE TABLE acquires a metadata lock which can block DML for a
   #     moment; running it from outside the database makes the window explicit.
-  optimize-cron:
+  mysql-optimize-cron:
     build:
-      context: ./optimize-cron
+      context: ./mysql-optimize-cron
       dockerfile: Dockerfile
-    container_name: oidc-optimize-cron
+    container_name: oidc-mysql-optimize-cron
     restart: unless-stopped
 
     environment:
       <<: *mysql-env
-      MYSQL_HOST:         mysql
-      MYSQL_PORT_INNER:   3306
+      MYSQL_HOST: mysql
+      MYSQL_PORT_INNER: 3306
       # 5-field cron expression: minute hour dom month dow
       # Default: every day at midnight UTC
-      OPTIMIZE_SCHEDULE:  ${OPTIMIZE_SCHEDULE:-0 0 * * *}
+      OPTIMIZE_SCHEDULE: ${OPTIMIZE_SCHEDULE:-0 0 * * *}
 
     depends_on:
       mysql:

@@ -3,17 +3,17 @@
 //! This module exposes a single [`build_cache`] function whose implementation
 //! is selected at compile time by the active cache feature flag:
 //!
-//! | Feature         | Cache type                                | External dependency  |
-//! |-----------------|-------------------------------------------|----------------------|
-//! | `cache-l2`      | Redis (L2-only)                           | Redis server         |
-//! | `cache-l1`      | Moka (L1-only)                            | None                 |
-//! | `cache-l1-l2`   | Moka L1 + Redis L2 (two-tier)             | Redis server         |
-//! | `cache-pg`      | PostgreSQL (L2-only)                      | PostgreSQL server    |
-//! | `cache-l1-pg`   | Moka L1 + PostgreSQL L2 (two-tier)        | PostgreSQL server    |
-//! | `cache-mysql`   | MySQL / MariaDB (L2-only)                 | MySQL/MariaDB server |
-//! | `cache-l1-mysql`| Moka L1 + MySQL L2 (two-tier)             | MySQL/MariaDB server |
-//! | `cache-sqlite`  | SQLite (L2-only)                          | None (file-based)    |
-//! | `cache-l1-sqlite`| Moka L1 + SQLite L2 (two-tier)           | None (file-based)    |
+//! | Feature          | Cache type                                | External dependency  |
+//! |------------------|-------------------------------------------|----------------------|
+//! | `cache-l2`       | Redis (L2-only)                           | Redis server         |
+//! | `cache-l1`       | Moka (L1-only)                            | None                 |
+//! | `cache-l1-l2`    | Moka L1 + Redis L2 (two-tier)             | Redis server         |
+//! | `cache-pg`       | PostgreSQL (L2-only)                      | PostgreSQL server    |
+//! | `cache-l1-pg`    | Moka L1 + PostgreSQL L2 (two-tier)        | PostgreSQL server    |
+//! | `cache-mysql`    | MySQL / MariaDB (L2-only)                 | MySQL/MariaDB server |
+//! | `cache-l1-mysql` | Moka L1 + MySQL L2 (two-tier)             | MySQL/MariaDB server |
+//! | `cache-sqlite`   | SQLite (L2-only)                          | None (file-based)    |
+//! | `cache-l1-sqlite`| Moka L1 + SQLite L2 (two-tier)            | None (file-based)    |
 //!
 //! Enabling both `cache-l1` and `cache-l2` individually produces the same
 //! binary as enabling `cache-l1-l2`.  Likewise, enabling both `cache-l1` and
@@ -72,7 +72,7 @@ use crate::config::Args;
     not(feature = "cache-pg"),
     not(feature = "cache-mysql"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::cache::{config::TwoTierCacheConfig, TwoTierAuthCache};
     use axum_oidc_client::redis;
 
@@ -109,7 +109,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     not(feature = "cache-mysql"),
     not(feature = "cache-sqlite"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::cache::{config::TwoTierCacheConfig, TwoTierAuthCache};
 
     let config = TwoTierCacheConfig {
@@ -134,7 +134,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     not(feature = "cache-pg"),
     not(feature = "cache-mysql"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::redis;
 
     Arc::new(redis::AuthCache::new(&args.redis_url, args.cache_ttl))
@@ -155,7 +155,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     not(feature = "cache-l1"),
     not(feature = "cache-mysql"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
 
     let config = SqlCacheConfig {
@@ -165,17 +165,13 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
         ..Default::default()
     };
 
-    // Block on async initialisation inside the already-running Tokio runtime.
-    let handle = tokio::runtime::Handle::current();
-    let cache = handle.block_on(async {
-        let c = SqlAuthCache::new(config)
-            .await
-            .expect("failed to connect to PostgreSQL for cache");
-        c.init_schema()
-            .await
-            .expect("failed to initialise PostgreSQL cache schema");
-        c
-    });
+    let cache = SqlAuthCache::new(config)
+        .await
+        .expect("failed to connect to PostgreSQL for cache");
+    cache
+        .init_schema()
+        .await
+        .expect("failed to initialise PostgreSQL cache schema");
 
     Arc::new(cache)
 }
@@ -198,7 +194,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     feature = "cache-pg",
     not(feature = "cache-mysql"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::cache::{config::TwoTierCacheConfig, TwoTierAuthCache};
     use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
 
@@ -209,17 +205,14 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
         ..Default::default()
     };
 
-    // Block on async initialisation inside the already-running Tokio runtime.
-    let handle = tokio::runtime::Handle::current();
-    let pg_l2: Arc<dyn AuthCache + Send + Sync> = handle.block_on(async {
-        let c = SqlAuthCache::new(pg_config)
-            .await
-            .expect("failed to connect to PostgreSQL for two-tier cache");
-        c.init_schema()
-            .await
-            .expect("failed to initialise PostgreSQL cache schema");
-        Arc::new(c) as Arc<dyn AuthCache + Send + Sync>
-    });
+    let pg = SqlAuthCache::new(pg_config)
+        .await
+        .expect("failed to connect to PostgreSQL for two-tier cache");
+    pg.init_schema()
+        .await
+        .expect("failed to initialise PostgreSQL cache schema");
+
+    let pg_l2: Arc<dyn AuthCache + Send + Sync> = Arc::new(pg);
 
     let l1_config = TwoTierCacheConfig {
         l1_max_capacity: args.l1_max_capacity,
@@ -248,7 +241,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
 ///
 /// Unlike PostgreSQL's MVCC dead-tuple model, InnoDB reclaims deleted row
 /// space via its background **purge thread** automatically.  The companion
-/// Docker Compose `optimize-cron` service runs `OPTIMIZE TABLE oidc_cache`
+/// Docker Compose `mysql-optimize-cron` service runs `OPTIMIZE TABLE oidc_cache`
 /// and `ANALYZE TABLE oidc_cache` at midnight to defragment InnoDB pages and
 /// refresh index statistics after large expiry waves.
 #[cfg(all(
@@ -256,7 +249,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     not(feature = "cache-l1"),
     not(feature = "cache-pg"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
 
     let config = SqlCacheConfig {
@@ -266,17 +259,13 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
         ..Default::default()
     };
 
-    // Block on async initialisation inside the already-running Tokio runtime.
-    let handle = tokio::runtime::Handle::current();
-    let cache = handle.block_on(async {
-        let c = SqlAuthCache::new(config)
-            .await
-            .expect("failed to connect to MySQL for cache");
-        c.init_schema()
-            .await
-            .expect("failed to initialise MySQL cache schema");
-        c
-    });
+    let cache = SqlAuthCache::new(config)
+        .await
+        .expect("failed to connect to MySQL for cache");
+    cache
+        .init_schema()
+        .await
+        .expect("failed to initialise MySQL cache schema");
 
     Arc::new(cache)
 }
@@ -300,7 +289,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     feature = "cache-mysql",
     not(feature = "cache-pg"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::cache::{config::TwoTierCacheConfig, TwoTierAuthCache};
     use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
 
@@ -311,17 +300,15 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
         ..Default::default()
     };
 
-    // Block on async initialisation inside the already-running Tokio runtime.
-    let handle = tokio::runtime::Handle::current();
-    let mysql_l2: Arc<dyn AuthCache + Send + Sync> = handle.block_on(async {
-        let c = SqlAuthCache::new(mysql_config)
-            .await
-            .expect("failed to connect to MySQL for two-tier cache");
-        c.init_schema()
-            .await
-            .expect("failed to initialise MySQL cache schema");
-        Arc::new(c) as Arc<dyn AuthCache + Send + Sync>
-    });
+    let mysql = SqlAuthCache::new(mysql_config)
+        .await
+        .expect("failed to connect to MySQL for two-tier cache");
+    mysql
+        .init_schema()
+        .await
+        .expect("failed to initialise MySQL cache schema");
+
+    let mysql_l2: Arc<dyn AuthCache + Send + Sync> = Arc::new(mysql);
 
     let l1_config = TwoTierCacheConfig {
         l1_max_capacity: args.l1_max_capacity,
@@ -357,7 +344,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     not(feature = "cache-pg"),
     not(feature = "cache-mysql"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
 
     let config = SqlCacheConfig {
@@ -367,16 +354,13 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
         ..Default::default()
     };
 
-    let handle = tokio::runtime::Handle::current();
-    let cache = handle.block_on(async {
-        let c = SqlAuthCache::new(config)
-            .await
-            .expect("failed to connect to SQLite for cache");
-        c.init_schema()
-            .await
-            .expect("failed to initialise SQLite cache schema");
-        c
-    });
+    let cache = SqlAuthCache::new(config)
+        .await
+        .expect("failed to connect to SQLite for cache");
+    cache
+        .init_schema()
+        .await
+        .expect("failed to initialise SQLite cache schema");
 
     Arc::new(cache)
 }
@@ -401,7 +385,7 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     not(feature = "cache-pg"),
     not(feature = "cache-mysql"),
 ))]
-pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
+pub async fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
     use axum_oidc_client::cache::{config::TwoTierCacheConfig, TwoTierAuthCache};
     use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
 
@@ -412,16 +396,15 @@ pub fn build_cache(args: &Args) -> Arc<dyn AuthCache + Send + Sync> {
         ..Default::default()
     };
 
-    let handle = tokio::runtime::Handle::current();
-    let sqlite_l2: Arc<dyn AuthCache + Send + Sync> = handle.block_on(async {
-        let c = SqlAuthCache::new(sqlite_config)
-            .await
-            .expect("failed to connect to SQLite for two-tier cache");
-        c.init_schema()
-            .await
-            .expect("failed to initialise SQLite cache schema");
-        Arc::new(c) as Arc<dyn AuthCache + Send + Sync>
-    });
+    let sqlite = SqlAuthCache::new(sqlite_config)
+        .await
+        .expect("failed to connect to SQLite for two-tier cache");
+    sqlite
+        .init_schema()
+        .await
+        .expect("failed to initialise SQLite cache schema");
+
+    let sqlite_l2: Arc<dyn AuthCache + Send + Sync> = Arc::new(sqlite);
 
     let l1_config = TwoTierCacheConfig {
         l1_max_capacity: args.l1_max_capacity,

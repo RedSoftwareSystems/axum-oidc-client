@@ -1,7 +1,7 @@
 #!/bin/sh
 # vacuum.sh
 # ──────────────────────────────────────────────────────────────────────────────
-# Scheduled maintenance script executed by crond inside the vacuum-cron
+# Scheduled maintenance script executed by crond inside the pg-vacuum-cron
 # container.
 #
 # What it does
@@ -40,7 +40,7 @@ PGPORT="${PGPORT:-5432}"
 TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 echo "==================================================================="
-echo "[vacuum-cron] ${TIMESTAMP} — starting VACUUM ANALYZE oidc_cache"
+echo "[pg-vacuum-cron] ${TIMESTAMP} — starting VACUUM ANALYZE oidc_cache"
 echo "  host: ${PGHOST}:${PGPORT}  db: ${POSTGRES_DB}  user: ${POSTGRES_USER}"
 echo "==================================================================="
 
@@ -92,9 +92,9 @@ EXIT_CODE=$?
 DONE_TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 if [ "${EXIT_CODE}" -eq 0 ]; then
-    echo "[vacuum-cron] ${DONE_TIMESTAMP} — VACUUM ANALYZE completed successfully (exit 0)"
+    echo "[pg-vacuum-cron] ${DONE_TIMESTAMP} — VACUUM ANALYZE completed successfully (exit 0)"
 else
-    echo "[vacuum-cron] ${DONE_TIMESTAMP} — VACUUM ANALYZE FAILED (exit ${EXIT_CODE})" >&2
+    echo "[pg-vacuum-cron] ${DONE_TIMESTAMP} — VACUUM ANALYZE FAILED (exit ${EXIT_CODE})" >&2
 fi
 
 exit "${EXIT_CODE}"
