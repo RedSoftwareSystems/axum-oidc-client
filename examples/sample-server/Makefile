@@ -38,6 +38,9 @@ COMPOSE_FILE ?= docker/docker-compose.postgres.yml
 # Docker Compose file for the MySQL stack.
 COMPOSE_FILE_MYSQL ?= docker/docker-compose.mysql.yml
 
+# Docker Compose file for the Redis stack.
+COMPOSE_FILE_REDIS ?= docker/docker-compose.redis.yml
+
 # Docker Compose file for the SQLite stack.
 COMPOSE_FILE_SQLITE ?= docker/docker-compose.sqlite.yml
 # Translate FEATURES into the cargo flag pair used by all targets below.
@@ -95,6 +98,14 @@ help:
 	@echo "  make build-mysql     - Build with MySQL-only cache"
 	@echo "  make build-l1-mysql  - Build with Moka L1 + MySQL L2 cache"
 	@echo ""
+	@echo ""
+	@echo -e "$(YELLOW)Docker (Redis):$(NC)"
+	@echo "  make redis-up        - Start the Redis 7 stack"
+	@echo "  make redis-down      - Stop and remove containers (data volume preserved)"
+	@echo "  make redis-destroy   - Stop containers AND delete the redis_data volume"
+	@echo "  make redis-logs      - Follow logs from all Redis Compose services"
+	@echo "  make redis-ps        - Show status of Redis Compose services"
+	@echo "  make redis-cli       - Open an interactive redis-cli shell inside the container"
 	@echo ""
 	@echo -e "$(YELLOW)Docker (PostgreSQL):$(NC)"
 	@echo "  make pg-up           - Start the PostgreSQL 18 + pg-vacuum-cron stack"
@@ -376,6 +387,49 @@ build-sqlite:
 .PHONY: build-l1-sqlite
 build-l1-sqlite:
 	@$(MAKE) build FEATURES=cache-l1-sqlite
+
+# ── Docker / Redis targets ─────────────────────────────────────────────────────
+
+## Start the Redis 7 Docker Compose stack.
+.PHONY: redis-up
+redis-up:
+	@echo -e "$(GREEN)Starting Redis 7 stack...$(NC)"
+	@if [ -f $(ENV_FILE) ]; then \
+		docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE_REDIS) up -d; \
+	else \
+		docker compose -f $(COMPOSE_FILE_REDIS) up -d; \
+	fi
+	@echo -e "$(GREEN)✓ Stack started. Redis available on port $${REDIS_PORT:-6379}$(NC)"
+	@echo -e "$(YELLOW)  Run 'make redis-logs' to follow service logs$(NC)"
+
+## Stop the Redis stack but preserve the redis_data volume.
+.PHONY: redis-down
+redis-down:
+	@echo -e "$(YELLOW)Stopping Redis Compose stack (data volume preserved)...$(NC)"
+	@docker compose -f $(COMPOSE_FILE_REDIS) down
+	@echo -e "$(GREEN)✓ Stack stopped$(NC)"
+
+## Stop the Redis stack AND delete the redis_data volume (destructive).
+.PHONY: redis-destroy
+redis-destroy:
+	@echo -e "$(RED)Destroying Redis Compose stack AND redis_data volume...$(NC)"
+	@docker compose -f $(COMPOSE_FILE_REDIS) down --volumes
+	@echo -e "$(GREEN)✓ Stack and volumes removed$(NC)"
+
+## Follow logs from all Redis Compose services (Ctrl-C to stop).
+.PHONY: redis-logs
+redis-logs:
+	@docker compose -f $(COMPOSE_FILE_REDIS) logs --follow
+
+## Show the status of all Redis Compose services.
+.PHONY: redis-ps
+redis-ps:
+	@docker compose -f $(COMPOSE_FILE_REDIS) ps
+
+## Open an interactive redis-cli shell inside the redis container.
+.PHONY: redis-cli
+redis-cli:
+	@docker compose -f $(COMPOSE_FILE_REDIS) exec redis redis-cli
 
 # ── Docker / PostgreSQL targets ────────────────────────────────────────────────
 

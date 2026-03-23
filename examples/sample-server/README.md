@@ -91,6 +91,37 @@ OAUTH_CLIENT_ID=your-id OAUTH_CLIENT_SECRET=your-secret cargo run
 
 ---
 
+## Redis Quick Start (Docker)
+
+The fastest way to get a Redis 7 instance running locally is with the included
+Docker Compose stack.
+
+```bash
+# 1. Copy the Redis example env file
+cp .env.redis.example .env.local
+
+# 2. Edit .env.local — fill in real OAuth2 credentials, keep the Redis defaults
+#    (REDIS_URL / CACHE_TTL)
+
+# 3. Start Redis 7
+make redis-up
+# or: docker compose -f docker/docker-compose.redis.yml up -d
+
+# 4. Run the server with the two-tier cache (Moka L1 + Redis L2)
+make run-l1-l2
+# or: cargo run --no-default-features --features cache-l1-l2
+```
+
+The stack starts a single service:
+
+| Service  | Purpose                                                                        |
+| -------- | ------------------------------------------------------------------------------ |
+| `redis`  | Redis 7-alpine with LRU eviction and persistence disabled (ephemeral cache)    |
+
+See [Docker Compose reference](#docker-compose-reference) for all make targets.
+
+---
+
 ## PostgreSQL Quick Start (Docker)
 
 The fastest way to get a PostgreSQL 18 instance running locally is with the
@@ -402,6 +433,45 @@ SQLITE_L1_TTL_SEC=1800
 
 ## Docker Compose Reference
 
+### Redis Docker reference
+
+The `docker/docker-compose.redis.yml` stack runs a single Redis 7-alpine
+container tuned for a short-TTL session cache.
+
+#### Why no maintenance sidecar?
+
+Redis manages its own memory automatically via the `maxmemory` +
+`maxmemory-policy allkeys-lru` configuration: when the memory ceiling is
+reached, the least-recently-used key is evicted.  All cache entries already
+carry an explicit TTL set by the application, so Redis expires them
+passively without any external cron job.
+
+#### Compose environment variables
+
+| Variable           | Default       | Description                                              |
+| ------------------ | ------------- | -------------------------------------------------------- |
+| `REDIS_PORT`       | `6379`        | Host-side port mapping                                   |
+| `REDIS_PASSWORD`   | *(empty)*     | Optional AUTH password — leave unset for no auth         |
+| `REDIS_MAXMEMORY`  | `256mb`       | Memory ceiling; LRU eviction triggers when reached       |
+
+When `REDIS_PASSWORD` is set, update `REDIS_URL` in `.env.local` to
+`redis://:<password>@127.0.0.1:6379/`.
+
+#### Make targets (Redis Docker)
+
+```bash
+make redis-up      # Start Redis 7
+make redis-down    # Stop containers; preserve redis_data volume
+make redis-destroy # Stop containers AND delete redis_data volume (destructive!)
+make redis-logs    # Follow logs from all services
+make redis-ps      # Show service status
+make redis-cli     # Open an interactive redis-cli shell inside the container
+```
+
+---
+
+### PostgreSQL Docker reference
+
 The `docker/docker-compose.postgres.yml` stack provides a fully configured PostgreSQL 18
 environment for local development and CI.
 
@@ -495,6 +565,8 @@ make pg-psql      # Open an interactive psql shell inside the postgres container
 VACUUM_SCHEDULE="*/5 * * * *" make pg-up
 make pg-logs   # watch the vacuum output
 ```
+
+---
 
 ### SQLite Docker reference
 
@@ -1212,6 +1284,8 @@ cargo run --release --no-default-features --features cache-l1-l2
 - [Quick Reference](../../QUICK_REFERENCE.md) — Common patterns
 - [Provider Examples](../../PROVIDER_EXAMPLES.md) — Detailed provider configs
 - [`.env.postgres.example`](.env.postgres.example) — Full PostgreSQL + Docker configuration reference
+- [`.env.redis.example`](.env.redis.example) — Redis + Docker configuration reference
+- [`docker/docker-compose.redis.yml`](docker/docker-compose.redis.yml) — Redis 7 stack
 - [`docker/docker-compose.postgres.yml`](docker/docker-compose.postgres.yml) — PostgreSQL 18 + pg-vacuum-cron stack
 - [`.env.sqlite.example`](.env.sqlite.example) — SQLite configuration reference
 - [`docker/docker-compose.sqlite.yml`](docker/docker-compose.sqlite.yml) — SQLite volume helper
