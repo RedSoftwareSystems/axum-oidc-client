@@ -494,11 +494,17 @@ impl SqlAuthCache {
         #[cfg(feature = "sql-cache-sqlite")]
         {
             if config.connection_string.starts_with("sqlite") {
+                let connect_options = config
+                    .connection_string
+                    .parse::<sqlx::sqlite::SqliteConnectOptions>()
+                    .map_err(|e| Error::CacheError(e.to_string()))?
+                    .create_if_missing(true);
+
                 let pool = sqlx::sqlite::SqlitePoolOptions::new()
                     .max_connections(config.max_connections)
                     .min_connections(config.min_connections)
                     .acquire_timeout(timeout)
-                    .connect(&config.connection_string)
+                    .connect_with(connect_options)
                     .await
                     .map_err(|e| Error::CacheError(e.to_string()))?;
 

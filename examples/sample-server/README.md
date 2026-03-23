@@ -498,19 +498,66 @@ make pg-logs   # watch the vacuum output
 
 ### SQLite Docker reference
 
-The `docker/docker-compose.sqlite.yml` file manages a `sqlite_data` named
-Docker volume so the database file persists across container and host restarts.
-No server process is started — SQLite is purely file-based.
+The `docker/docker-compose.sqlite.yml` stack manages the `sqlite_data` named
+Docker volume and a `sqlite-vacuum-cron` maintenance sidecar.  No database
+server process is started — SQLite is purely file-based.
+
+#### Services
+
+| Service               | Purpose                                                                        |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `sqlite-vacuum-cron`  | Alpine container that runs `VACUUM` + `PRAGMA optimize` on a cron schedule     |
+
+#### `sqlite-vacuum-cron` (Alpine + BusyBox crond)
+
+A lightweight sidecar (~8 MB image) that runs scheduled SQLite maintenance via
+BusyBox `crond`.
+
+- Schedule is controlled by `VACUUM_SCHEDULE` (default: `0 0 * * *` — every
+  day at **midnight UTC**).
+- Mounts the same `sqlite_data` volume as the sample-server so it operates on
+  the live database file.
+- The database file is created by the sample-server on first connection.  If
+  the file does not exist yet when the cron job fires, the job skips
+  gracefully and retries on the next scheduled run.
+
+**What each step does:**
+
+| Step               | Purpose                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `VACUUM`           | Rewrites the database into a compacted file, returning free pages to the OS.  SQLite does not have a background purge thread — free pages from `DELETE` operations accumulate until `VACUUM` runs. |
+| `PRAGMA optimize`  | SQLite's lightweight equivalent of `ANALYZE`.  Refreshes query-planner statistics for stale tables without rewriting the database file. |
+
+**Why not WAL checkpoint instead?**
+A `PRAGMA wal_checkpoint(TRUNCATE)` only merges the WAL file back into the main
+database; it does not compact free pages left by deletes.  `VACUUM` is still
+required to reclaim that space.
+
+#### Compose environment variables
+
+| Variable           | Default                  | Description                                        |
+| ------------------ | ------------------------ | -------------------------------------------------- |
+| `SQLITE_DB_PATH`   | `/data/oidc_cache.db`    | Absolute path to the database file in the container |
+| `VACUUM_SCHEDULE`  | `0 0 * * *`              | 5-field cron expression for the nightly vacuum job  |
 
 #### Make targets (SQLite Docker)
 
 ```bash
-make sqlite-up       # Create the sqlite_data volume (run once before first use)
+make sqlite-up       # Start the sqlite_data volume + sqlite-vacuum-cron sidecar
 make sqlite-down     # Stop the stack; volume is preserved
 make sqlite-destroy  # Remove the stack AND the sqlite_data volume (destructive!)
-make sqlite-logs     # Follow compose logs
-make sqlite-ps       # Show compose service status
+make sqlite-logs     # Follow logs from all services
+make sqlite-ps       # Show service status
+make sqlite-vacuum   # Run VACUUM + PRAGMA optimize manually (one-shot, useful for testing)
 make sqlite-shell    # Open an interactive sqlite3 shell on oidc_cache.db
+```
+
+**To test the vacuum job without waiting until midnight:**
+
+```bash
+# Override the schedule to run every 5 minutes, then restart the stack
+VACUUM_SCHEDULE="*/5 * * * *" make sqlite-up
+make sqlite-logs   # watch the vacuum output
 ```
 
 After running `make sqlite-up`, set the following in `.env.local`:

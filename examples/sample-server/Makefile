@@ -118,6 +118,9 @@ help:
 	@echo "  make sqlite-up       - Create the SQLite data directory and volume"
 	@echo "  make sqlite-down     - Stop and remove the SQLite container"
 	@echo "  make sqlite-destroy  - Remove the SQLite data volume (destructive!)"
+	@echo "  make sqlite-logs     - Follow logs from the SQLite Compose services"
+	@echo "  make sqlite-ps       - Show status of SQLite Compose services"
+	@echo "  make sqlite-vacuum   - Run VACUUM + PRAGMA optimize manually (one-shot)"
 	@echo "  make sqlite-shell    - Open a sqlite3 shell on the cache database"
 	@echo ""
 	@echo -e "$(YELLOW)Build:$(NC)"
@@ -502,17 +505,18 @@ mysql-shell:
 # app container.  Set SQLITE_URL=sqlite:////data/oidc_cache.db in .env.local
 # to point the sample-server at that path.
 
-## Create the SQLite data directory and start the minimal SQLite stack.
+## Start the SQLite volume + sqlite-vacuum-cron sidecar.
 .PHONY: sqlite-up
 sqlite-up:
-	@echo -e "$(GREEN)Creating SQLite data volume...$(NC)"
+	@echo -e "$(GREEN)Starting SQLite volume + sqlite-vacuum-cron stack...$(NC)"
 	@if [ -f $(ENV_FILE) ]; then \
-		docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE_SQLITE) up -d; \
+		docker compose --env-file $(ENV_FILE) -f $(COMPOSE_FILE_SQLITE) up -d --build; \
 	else \
-		docker compose -f $(COMPOSE_FILE_SQLITE) up -d; \
+		docker compose -f $(COMPOSE_FILE_SQLITE) up -d --build; \
 	fi
-	@echo -e "$(GREEN)✓ SQLite volume ready$(NC)"
+	@echo -e "$(GREEN)✓ Stack started$(NC)"
 	@echo -e "$(YELLOW)  Set SQLITE_URL=sqlite:////data/oidc_cache.db in .env.local$(NC)"
+	@echo -e "$(YELLOW)  Run 'make sqlite-logs' to follow service logs$(NC)"
 
 ## Stop the SQLite stack (data volume preserved).
 .PHONY: sqlite-down
@@ -528,15 +532,23 @@ sqlite-destroy:
 	@docker compose -f $(COMPOSE_FILE_SQLITE) down --volumes
 	@echo -e "$(GREEN)✓ Stack and volumes removed$(NC)"
 
-## Follow logs from the SQLite Compose stack.
+## Follow logs from all SQLite Compose services (Ctrl-C to stop).
 .PHONY: sqlite-logs
 sqlite-logs:
 	@docker compose -f $(COMPOSE_FILE_SQLITE) logs --follow
 
-## Show status of the SQLite Compose stack.
+## Show status of all SQLite Compose services.
 .PHONY: sqlite-ps
 sqlite-ps:
 	@docker compose -f $(COMPOSE_FILE_SQLITE) ps
+
+## Run a one-shot VACUUM + PRAGMA optimize on the SQLite database (useful for testing/debugging).
+.PHONY: sqlite-vacuum
+sqlite-vacuum:
+	@echo -e "$(BLUE)Running manual VACUUM + PRAGMA optimize on SQLite database...$(NC)"
+	@docker compose -f $(COMPOSE_FILE_SQLITE) exec sqlite-vacuum-cron \
+		su-exec cronuser /usr/local/bin/vacuum.sh
+	@echo -e "$(GREEN)✓ VACUUM + PRAGMA optimize complete$(NC)"
 
 ## Open an interactive sqlite3 shell on the cache database.
 .PHONY: sqlite-shell
