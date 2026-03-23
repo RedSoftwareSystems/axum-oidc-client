@@ -108,7 +108,7 @@ make redis-up
 # or: docker compose -f docker/docker-compose.redis.yml up -d
 
 # 4. Run the server with the two-tier cache (Moka L1 + Redis L2)
-make run-l1-l2
+make run-l1-redis
 # or: cargo run --no-default-features --features cache-l1-l2
 ```
 
@@ -465,7 +465,7 @@ make redis-down    # Stop containers; preserve redis_data volume
 make redis-destroy # Stop containers AND delete redis_data volume (destructive!)
 make redis-logs    # Follow logs from all services
 make redis-ps      # Show service status
-make redis-cli     # Open an interactive redis-cli shell inside the container
+make redis-shell   # Open an interactive redis-cli shell inside the container
 ```
 
 ---
@@ -902,23 +902,23 @@ make build FEATURES=cache-l1
 
 ```bash
 # Run
-make run-l2        # Redis only
+make run-redis     # Redis only
 make run-l1        # Moka in-process only
-make run-l1-l2     # Two-tier (Moka + Redis)
+make run-l1-redis  # Two-tier (Moka + Redis)
 make run-pg        # PostgreSQL only
 make run-l1-pg     # Two-tier (Moka + PostgreSQL)  ← recommended
 
 # Watch-run (requires cargo-watch)
-make dev-l2
+make dev-redis
 make dev-l1
-make dev-l1-l2
+make dev-l1-redis
 make dev-pg
 make dev-l1-pg
 
 # Build only
-make build-l2
+make build-redis
 make build-l1
-make build-l1-l2
+make build-l1-redis
 make build-pg
 make build-l1-pg
 ```
@@ -953,7 +953,7 @@ make help          # show all targets with descriptions
 
 ```bash
 make run PORT=3000 HOST=0.0.0.0 FEATURES=cache-l1
-DOTENV_FILE=.env.prod make run-l1-l2
+DOTENV_FILE=.env.prod make run-l1-redis
 ```
 
 ---

@@ -70,16 +70,16 @@ help:
 	@echo "  make watch           - Alias for 'make dev'"
 	@echo ""
 	@echo -e "$(YELLOW)Cache-specific shortcuts:$(NC)"
-	@echo "  make run-l2          - Run with Redis-only cache        (cache-l2)"
+	@echo "  make run-redis       - Run with Redis-only cache        (cache-l2)"
 	@echo "  make run-l1          - Run with Moka in-process cache   (cache-l1, no Redis needed)"
-	@echo "  make run-l1-l2       - Run with two-tier cache          (cache-l1-l2)"
+	@echo "  make run-l1-redis    - Run with two-tier cache          (cache-l1-l2)"
 	@echo "  make run-pg          - Run with PostgreSQL-only cache      (cache-pg)"
 	@echo "  make run-l1-pg       - Run with Moka L1 + PG L2 cache     (cache-l1-pg)"
 	@echo "  make run-mysql       - Run with MySQL-only cache           (cache-mysql)"
 	@echo "  make run-l1-mysql    - Run with Moka L1 + MySQL L2 cache  (cache-l1-mysql)"
-	@echo "  make dev-l2          - Watch-run with Redis-only cache"
+	@echo "  make dev-redis       - Watch-run with Redis-only cache"
 	@echo "  make dev-l1          - Watch-run with Moka in-process cache"
-	@echo "  make dev-l1-l2       - Watch-run with two-tier cache"
+	@echo "  make dev-l1-redis    - Watch-run with two-tier cache"
 	@echo "  make dev-pg          - Watch-run with PostgreSQL-only cache"
 	@echo "  make dev-l1-pg       - Watch-run with Moka L1 + PostgreSQL L2 cache"
 	@echo "  make dev-mysql       - Watch-run with MySQL-only cache"
@@ -90,9 +90,9 @@ help:
 	@echo "  make dev-l1-sqlite   - Watch-run with Moka L1 + SQLite L2 cache"
 	@echo "  make build-sqlite    - Build with SQLite-only cache"
 	@echo "  make build-l1-sqlite - Build with Moka L1 + SQLite L2 cache"
-	@echo "  make build-l2        - Build with Redis-only cache"
+	@echo "  make build-redis     - Build with Redis-only cache"
 	@echo "  make build-l1        - Build with Moka in-process cache"
-	@echo "  make build-l1-l2     - Build with two-tier cache"
+	@echo "  make build-l1-redis  - Build with two-tier cache"
 	@echo "  make build-pg        - Build with PostgreSQL-only cache"
 	@echo "  make build-l1-pg     - Build with Moka L1 + PostgreSQL L2 cache"
 	@echo "  make build-mysql     - Build with MySQL-only cache"
@@ -105,7 +105,7 @@ help:
 	@echo "  make redis-destroy   - Stop containers AND delete the redis_data volume"
 	@echo "  make redis-logs      - Follow logs from all Redis Compose services"
 	@echo "  make redis-ps        - Show status of Redis Compose services"
-	@echo "  make redis-cli       - Open an interactive redis-cli shell inside the container"
+	@echo "  make redis-shell     - Open an interactive redis-cli shell inside the container"
 	@echo ""
 	@echo -e "$(YELLOW)Docker (PostgreSQL):$(NC)"
 	@echo "  make pg-up           - Start the PostgreSQL 18 + pg-vacuum-cron stack"
@@ -162,8 +162,8 @@ help:
 	@echo ""
 	@echo -e "$(BLUE)Cache feature summary:$(NC)"
 	@echo "  cache-l1      Moka in-process only  (default, no external backend)"
-	@echo "  cache-l2      Redis only            (requires Redis)"
-	@echo "  cache-l1-l2   Moka L1 + Redis L2    (two-tier, requires Redis)"
+	@echo "  cache-l2      Redis only            (requires Redis)     → use run-redis / dev-redis / build-redis"
+	@echo "  cache-l1-l2   Moka L1 + Redis L2    (two-tier, requires Redis) → use run-l1-redis / dev-l1-redis / build-l1-redis"
 	@echo "  cache-pg        PostgreSQL only       (requires PostgreSQL)"
 	@echo "  cache-l1-pg     Moka L1 + PG L2       (two-tier, requires PostgreSQL)"
 	@echo "  cache-mysql     MySQL/MariaDB only     (requires MySQL or MariaDB)"
@@ -253,16 +253,16 @@ dev: install setup
 	fi
 
 # ── Cache-specific dev targets ─────────────────────────────────────────────────
-.PHONY: dev-l2
-dev-l2:
+.PHONY: dev-redis
+dev-redis:
 	@$(MAKE) dev FEATURES=cache-l2
 
 .PHONY: dev-l1
 dev-l1:
 	@$(MAKE) dev FEATURES=cache-l1
 
-.PHONY: dev-l1-l2
-dev-l1-l2:
+.PHONY: dev-l1-redis
+dev-l1-redis:
 	@$(MAKE) dev FEATURES=cache-l1-l2
 
 .PHONY: dev-pg
@@ -308,16 +308,16 @@ run: setup
 	fi
 
 # ── Cache-specific run targets ─────────────────────────────────────────────────
-.PHONY: run-l2
-run-l2:
+.PHONY: run-redis
+run-redis:
 	@$(MAKE) run FEATURES=cache-l2
 
 .PHONY: run-l1
 run-l1:
 	@$(MAKE) run FEATURES=cache-l1
 
-.PHONY: run-l1-l2
-run-l1-l2:
+.PHONY: run-l1-redis
+run-l1-redis:
 	@$(MAKE) run FEATURES=cache-l1-l2
 
 .PHONY: run-pg
@@ -352,16 +352,16 @@ build:
 	@echo -e "$(GREEN)✓ Build complete$(NC)"
 
 # ── Cache-specific build targets ───────────────────────────────────────────────
-.PHONY: build-l2
-build-l2:
+.PHONY: build-redis
+build-redis:
 	@$(MAKE) build FEATURES=cache-l2
 
 .PHONY: build-l1
 build-l1:
 	@$(MAKE) build FEATURES=cache-l1
 
-.PHONY: build-l1-l2
-build-l1-l2:
+.PHONY: build-l1-redis
+build-l1-redis:
 	@$(MAKE) build FEATURES=cache-l1-l2
 
 .PHONY: build-pg
@@ -427,8 +427,8 @@ redis-ps:
 	@docker compose -f $(COMPOSE_FILE_REDIS) ps
 
 ## Open an interactive redis-cli shell inside the redis container.
-.PHONY: redis-cli
-redis-cli:
+.PHONY: redis-shell
+redis-shell:
 	@docker compose -f $(COMPOSE_FILE_REDIS) exec redis redis-cli
 
 # ── Docker / PostgreSQL targets ────────────────────────────────────────────────

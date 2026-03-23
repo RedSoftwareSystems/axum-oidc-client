@@ -20,11 +20,11 @@
 #   docker compose -f docker/docker-compose.redis.yml up -d
 #
 #   # Run with Redis-only cache
-#   make run-l2
+#   make run-redis
 #   # or: cargo run --no-default-features --features cache-l2
 #
 #   # Run with two-tier Moka L1 + Redis L2 cache (recommended)
-#   make run-l1-l2
+#   make run-l1-redis
 #   # or: cargo run --no-default-features --features cache-l1-l2
 #
 # Environment variables (override in .env.local or shell)
