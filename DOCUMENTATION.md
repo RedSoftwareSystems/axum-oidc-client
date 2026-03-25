@@ -1,4 +1,4 @@
-# axum-oidc-client API Documentation (v0.2.1)
+# axum-oidc-client API Documentation (v0.3.0)
 
 Complete API documentation and usage guide for the axum-oidc-client library.
 
@@ -58,6 +58,189 @@ PKCE enhances OAuth2 security by:
 - Provider validates verifier matches challenge
 
 ## API Reference
+
+### Module: `sql_cache`
+
+SQL database cache backend implementing [`AuthCache`](crate::auth_cache::AuthCache) via [`sqlx`](https://crates.io/crates/sqlx). Provides PostgreSQL, MySQL/MariaDB, and SQLite backends as an alternative L2 cache to Redis (requires one of the `sql-cache-*` feature flags).
+
+#### `SqlCacheConfig`
+
+```rust
+pub struct SqlCacheConfig {
+    /// Database connection URL. Examples:
+    ///   PostgreSQL: "postgresql://user:pass@host/dbname"
+    ///   MySQL:      "mysql://user:pass@host/dbname"
+    ///   SQLite:     "sqlite://path/to/file.db" or "sqlite://:memory:"
+    pub connection_string: String,        // required — no default
+    pub max_connections: u32,             // default: 20
+    pub min_connections: u32,             // default: 2
+    pub cleanup_interval_sec: u64,        // default: 300 (5 min)
+    pub table_name: String,               // default: "oidc_cache"
+    pub acquire_timeout_sec: u64,         // default: 30
+    pub code_verifier_ttl_sec: i64,       // default: 60
+}
+```
+
+#### `SqlAuthCache`
+
+```rust
+use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
+use std::sync::Arc;
+
+// SQLite — ideal for development and single-instance deployments
+let config = SqlCacheConfig {
+    connection_string: "sqlite://cache.db".to_string(),
+    ..Default::default()
+};
+let cache = Arc::new(SqlAuthCache::new(config).await?);
+cache.init_schema().await?;  // creates table + index (idempotent, safe to call on every startup)
+
+// PostgreSQL
+let config = SqlCacheConfig {
+    connection_string: "postgresql://user:pass@localhost/mydb".to_string(),
+    max_connections: 20,
+    ..Default::default()
+};
+let cache = Arc::new(SqlAuthCache::new(config).await?);
+cache.init_schema().await?;
+```
+
+**Methods:**
+
+| Method                          | Description                                                          |
+|---------------------------------|----------------------------------------------------------------------|
+| `SqlAuthCache::new(config)`     | Async constructor; starts background cleanup task                    |
+| `cache.init_schema()`           | Creates table + index (idempotent; call once on startup)             |
+| `cache.shutdown()`              | Gracefully stops the background cleanup task                         |
+| `cache.config()`                | Returns a reference to the `SqlCacheConfig` used at construction     |
+
+**Schema** (created by `init_schema()`, table name from `SqlCacheConfig::table_name`):
+
+```sql
+-- PostgreSQL
+CREATE UNLOGGED TABLE IF NOT EXISTS oidc_cache (
+    cache_key   VARCHAR(255) PRIMARY KEY,
+    cache_value TEXT         NOT NULL,
+    expires_at  BIGINT       NOT NULL   -- Unix timestamp (seconds)
+);
+CREATE INDEX IF NOT EXISTS idx_oidc_cache_expires ON oidc_cache (expires_at);
+
+-- MySQL / MariaDB and SQLite use a regular (logged) table.
+```
+
+> **PostgreSQL note:** The table is declared `UNLOGGED` because it holds ephemeral cache data
+> (PKCE code verifiers and auth sessions) that does not need to survive a crash or server restart.
+> `UNLOGGED` tables bypass WAL writes, giving significantly higher write throughput and lower I/O.
+> The trade-off — the table is truncated automatically on crash recovery — is acceptable for a
+> cache: on restart the application simply re-authenticates any affected sessions.
+
+**Key prefixes used internally:**
+
+| Prefix      | Entry type              |
+|-------------|-------------------------|
+| `cv:`       | PKCE code verifiers     |
+| `session:`  | Auth sessions (JSON)    |
+
+**TTL management:**
+- All reads include `AND expires_at > <now>` so expired rows are never returned (lazy deletion).
+- A background Tokio task purges expired rows in batches of 1 000 rows at `cleanup_interval_sec` intervals. Stop it with `cache.shutdown().await`.
+
+**PostgreSQL: VACUUM after bulk deletes (recommended):**
+
+PostgreSQL uses MVCC (Multi-Version Concurrency Control): a `DELETE` statement does not immediately
+free disk pages — it marks rows as "dead" tuples that are reclaimed only when a `VACUUM` pass runs
+over the table. On a high-churn cache table this can cause table bloat if dead tuples accumulate
+faster than `autovacuum` reclaims them.
+
+`autovacuum` (enabled by default in all modern PostgreSQL installations) will eventually reclaim
+dead tuples automatically, but for a dedicated cache table with high write/delete throughput it is
+good practice to tune it aggressively and/or schedule a manual `VACUUM`:
+
+*1. Tune `autovacuum` per-table (run once after `init_schema`, idempotent):*
+
+```sql
+ALTER TABLE oidc_cache SET (
+    autovacuum_vacuum_scale_factor  = 0.01,  -- vacuum after 1 % of rows change (default: 20 %)
+    autovacuum_analyze_scale_factor = 0.01,  -- analyze after 1 % of rows change (default: 10 %)
+    autovacuum_vacuum_cost_delay    = 2       -- ms; lower = faster vacuum at the cost of more I/O
+);
+```
+
+*2. Manual `VACUUM` forms — choose the right one for your situation:*
+
+```sql
+-- Standard: reclaim dead tuples without locking the table. Safe for production.
+VACUUM oidc_cache;
+
+-- Recommended for scheduled maintenance: also refreshes planner statistics.
+VACUUM ANALYZE oidc_cache;
+
+-- Full rewrite: maximum space reclamation, but takes an ACCESS EXCLUSIVE lock.
+-- Only use during a maintenance window when no live traffic hits the cache.
+VACUUM FULL oidc_cache;
+```
+
+*3. Schedule via system cron (outside the database):*
+
+```text
+# Run VACUUM ANALYZE on the cache table every night at 03:00.
+0 3 * * *  psql -U myuser -d mydb -c "VACUUM ANALYZE oidc_cache;"
+```
+
+*4. Schedule via `pg_cron` (entirely inside PostgreSQL — no external cron needed):*
+
+```sql
+-- Install the extension once per database cluster (superuser required).
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Schedule VACUUM ANALYZE every night at 03:00 server time.
+SELECT cron.schedule(
+    'vacuum-oidc-cache',         -- unique job name
+    '0 3 * * *',                 -- standard cron expression
+    'VACUUM ANALYZE oidc_cache'  -- SQL statement to execute
+);
+
+-- Inspect scheduled jobs.
+SELECT * FROM cron.job;
+
+-- Remove the job when it is no longer needed.
+SELECT cron.unschedule('vacuum-oidc-cache');
+```
+
+> **Note:** Because the cache table is declared `UNLOGGED`, PostgreSQL already skips WAL writes
+> for all DML. `VACUUM` itself is not WAL-logged either, so the combination of `UNLOGGED` +
+> regular `VACUUM` gives the best trade-off between write performance, storage efficiency, and
+> query-planner accuracy.
+
+**Composing with `TwoTierAuthCache` (Moka L1 + SQL L2):**
+
+```rust
+use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+use axum_oidc_client::auth_cache::AuthCache;
+use std::sync::Arc;
+
+let sql = Arc::new(SqlAuthCache::new(SqlCacheConfig {
+    connection_string: "postgresql://user:pass@localhost/mydb".to_string(),
+    ..Default::default()
+}).await?);
+sql.init_schema().await?;
+
+let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
+    TwoTierAuthCache::new(
+        Some(sql as Arc<dyn AuthCache + Send + Sync>),
+        TwoTierCacheConfig::default(),
+    )?
+);
+```
+
+**Database-specific notes:**
+
+| Database      | Feature flag          | UPSERT syntax                                | Notes                                                         |
+|---------------|-----------------------|----------------------------------------------|---------------------------------------------------------------|
+| PostgreSQL    | `sql-cache-postgres`  | `INSERT … ON CONFLICT … DO UPDATE`           | Uses `UNLOGGED TABLE` — no WAL writes, higher write throughput|
+| MySQL/MariaDB | `sql-cache-mysql`     | `INSERT … ON DUPLICATE KEY UPDATE`           | Use InnoDB engine; utf8mb4 charset                            |
+| SQLite        | `sql-cache-sqlite`    | `INSERT OR REPLACE INTO …`                   | Enable WAL mode for better concurrency in prod                |
 
 ### Module: `cache`
 
@@ -276,6 +459,18 @@ use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
 
 // L1-only
 let cache = TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?;
+```
+
+**SQL Cache** (requires a `sql-cache-*` feature):
+
+```rust
+use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
+
+let cache = SqlAuthCache::new(SqlCacheConfig {
+    connection_string: "sqlite://:memory:".to_string(),
+    ..Default::default()
+}).await?;
+cache.init_schema().await?;
 ```
 
 **Redis Cache** (requires `redis` feature):
@@ -1154,4 +1349,4 @@ The `AuthLayer` adds these routes automatically:
 ---
 
 **Last Updated:** 2026-03-04
-**Version:** 0.2.1
+**Version:** 0.3.0

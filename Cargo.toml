@@ -1,6 +1,6 @@
 [package]
 name = "axum-oidc-client"
-version = "0.2.1"
+version = "0.4.0"
 edition = "2021"
 license = "MIT"
 description = "OpenID Connect (OIDC) and OAuth2 client middleware for Axum web framework"
@@ -32,6 +32,16 @@ time = "0.3.44"
 redis = { version = "1.0.0-rc.3", optional = true, features = ["tokio-comp", "connection-manager"]}
 moka = { version = "0.12.11", optional = true, features = ["future"]}
 chrono = {version = "0.4.42", features = ["serde"]}
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = { version = "0.1" }
+
+# sqlx is pulled in only when at least one sql-cache-* feature is enabled.
+# The runtime is always tokio; the database driver is selected per feature.
+sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "chrono"] }
+
+[dev-dependencies]
+mockito = "1"
+tempfile = "3"
 
 [features]
 default = ["moka-cache"]
@@ -39,3 +49,12 @@ moka-cache = ["dep:moka"]
 redis = ["dep:redis"]
 redis-native-tls= ["redis", "redis?/tokio-native-tls-comp"] #"tokio-native-tls-comp"
 redis-rustls = ["redis", "redis?/tokio-rustls-comp"] #"tokio-rustls-comp"
+
+# SQL cache backends – enable exactly one for production use.
+# Multiple can be enabled simultaneously for testing purposes.
+sql-cache-postgres = ["dep:sqlx", "sqlx?/postgres"]
+sql-cache-mysql    = ["dep:sqlx", "sqlx?/mysql"]
+sql-cache-sqlite   = ["dep:sqlx", "sqlx?/sqlite"]
+
+# Convenience feature that enables all three SQL backends at once (for tests).
+sql-cache-all = ["sql-cache-postgres", "sql-cache-mysql", "sql-cache-sqlite"]

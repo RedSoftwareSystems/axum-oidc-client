@@ -59,6 +59,11 @@ async fn get_auth_tokens(
         .await?
         .ok_or(Error::MissingCodeVerifier)?;
 
+    // Invalidate immediately after retrieval — the verifier is single-use.
+    // This runs before the token exchange so that a network error or a
+    // rejected exchange cannot be retried with the same verifier.
+    cache.invalidate_code_verifier(&query.state).await?;
+
     let params = [
         ("grant_type", "authorization_code"),
         ("code", &query.code),

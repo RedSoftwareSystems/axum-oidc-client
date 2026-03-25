@@ -611,5 +611,5 @@ See [README.md](README.md#custom-handler) for implementation details.
 
 ---
 
-**Version:** 0.2.1  
+**Version:** 0.3.0  
 **Last Updated:** 2026-03-04

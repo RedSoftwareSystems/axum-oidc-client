@@ -3,7 +3,14 @@
 //! This module provides a builder pattern for constructing [`OAuthConfiguration`]
 //! instances with validation and sensible defaults.
 //!
+//! Endpoints can be populated automatically from an OIDC provider's discovery
+//! document by calling [`OAuthConfigurationBuilder::with_issuer`].  Any field
+//! set explicitly with a `with_*` setter always takes precedence over values
+//! fetched from the discovery document.
+//!
 //! # Examples
+//!
+//! ## Manual endpoint configuration
 //!
 //! ```rust,no_run
 //! use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
@@ -24,13 +31,76 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ## Auto-discovery via issuer URL
+//!
+//! ```rust,no_run
+//! use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let config = OAuthConfigurationBuilder::default()
+//!     .with_issuer("https://accounts.google.com").await?
+//!     .with_client_id("your-client-id")
+//!     .with_client_secret("your-client-secret")
+//!     .with_redirect_uri("http://localhost:8080/auth/callback")
+//!     .with_private_cookie_key("your-secret-key-at-least-32-bytes")
+//!     .with_post_logout_redirect_uri("/")
+//!     .with_session_max_age(30)
+//!     .build()?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::fmt::Display;
 
 use axum_extra::extract::cookie::Key;
+use serde::Deserialize;
 
 use crate::auth::{CodeChallengeMethod, OAuthConfiguration};
 use crate::errors::Error;
+use crate::http_client::build_http_client;
+
+// ─── OIDC Discovery document ──────────────────────────────────────────────────
+
+/// Subset of the OIDC Provider Metadata returned by the
+/// `/.well-known/openid-configuration` discovery endpoint.
+///
+/// Only the fields that map directly to [`OAuthConfigurationBuilder`] are
+/// captured here.  Additional fields present in the document are silently
+/// ignored via `#[serde(deny_unknown_fields)]` being absent.
+///
+/// Reference: [OpenID Connect Discovery 1.0 §3](https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderMetadata)
+#[derive(Debug, Deserialize)]
+struct OidcDiscovery {
+    /// `authorization_endpoint` — URL of the authorization server's
+    /// authorization endpoint.  Maps to
+    /// [`OAuthConfigurationBuilder::authorization_endpoint`].
+    authorization_endpoint: String,
+
+    /// `token_endpoint` — URL of the authorization server's token endpoint.
+    /// Maps to [`OAuthConfigurationBuilder::token_endpoint`].
+    token_endpoint: String,
+
+    /// `end_session_endpoint` — URL of the OP's logout endpoint (optional).
+    /// Present only for providers that support RP-Initiated Logout.
+    /// Maps to [`OAuthConfigurationBuilder::end_session_endpoint`].
+    #[serde(default)]
+    end_session_endpoint: Option<String>,
+
+    /// `scopes_supported` — list of OAuth 2.0 scope values the server supports
+    /// (optional).  When present and the builder has no explicit scopes set,
+    /// the intersection of this list with `["openid", "email", "profile"]` is
+    /// used so we only request scopes the provider actually supports.
+    #[serde(default)]
+    scopes_supported: Option<Vec<String>>,
+
+    /// `code_challenge_methods_supported` — PKCE methods supported by the
+    /// provider (optional).  When present and the builder has not had
+    /// `with_code_challenge_method` called, `S256` is selected if supported,
+    /// otherwise `plain`.
+    #[serde(default)]
+    code_challenge_methods_supported: Option<Vec<String>>,
+}
 
 /// OAuth2 scopes wrapper.
 ///
@@ -66,9 +136,14 @@ impl Display for Scopes {
 /// Provides a fluent API for building OAuth2 configurations with validation
 /// and sensible defaults.
 ///
+/// Endpoints can be populated automatically from an OIDC discovery document
+/// by calling [`with_issuer`](Self::with_issuer).  Any field subsequently set
+/// with a `with_*` setter overrides the discovered value.
+///
 /// # Required Fields
 ///
-/// The following fields must be set before calling [`build()`](Self::build):
+/// The following fields must be set before calling [`build()`](Self::build),
+/// either manually or via [`with_issuer`](Self::with_issuer):
 /// - `client_id`
 /// - `client_secret`
 /// - `redirect_uri`
@@ -80,7 +155,7 @@ impl Display for Scopes {
 ///
 /// - `scopes` - Defaults to `["openid", "email", "profile"]`
 /// - `code_challenge_method` - Defaults to `S256`
-/// - `end_session_endpoint` - For OIDC logout support
+/// - `end_session_endpoint` - For OIDC logout support (auto-discovered when present)
 /// - `post_logout_redirect_uri` - Where to redirect after logout
 /// - `custom_ca_cert` - Path to custom CA certificate
 /// - `session_max_age` - Maximum session duration in minutes
@@ -137,6 +212,151 @@ pub struct OAuthConfigurationBuilder {
     pub token_max_age: Option<i64>,
     /// Base path for authentication routes
     pub base_path: Option<String>,
+    /// Tracks whether `with_code_challenge_method` was called explicitly so
+    /// that `with_issuer` knows not to overwrite it with the discovered value.
+    code_challenge_method_explicit: bool,
+    /// Tracks whether `with_scopes` was called explicitly so that `with_issuer`
+    /// knows not to overwrite the scopes with the discovered values.
+    scopes_explicit: bool,
+}
+
+impl OAuthConfigurationBuilder {
+    // ── OIDC discovery ────────────────────────────────────────────────────────
+
+    /// Populate endpoints from the provider's OIDC discovery document.
+    ///
+    /// Fetches `<issuer>/.well-known/openid-configuration` and fills in:
+    ///
+    /// | Discovery field                       | Builder field               | Condition                        |
+    /// |---------------------------------------|-----------------------------|----------------------------------|
+    /// | `authorization_endpoint`              | `authorization_endpoint`    | not already set                  |
+    /// | `token_endpoint`                      | `token_endpoint`            | not already set                  |
+    /// | `end_session_endpoint`                | `end_session_endpoint`      | not already set, present in doc  |
+    /// | `scopes_supported`                    | `scopes`                    | `with_scopes` not called         |
+    /// | `code_challenge_methods_supported`    | `code_challenge_method`     | `with_code_challenge_method` not called |
+    ///
+    /// Fields already set via a `with_*` setter are **never overwritten**.
+    ///
+    /// # Scope selection
+    ///
+    /// When `scopes_supported` is present in the discovery document and
+    /// `with_scopes` has not been called, this method requests only those
+    /// scopes from the default set `["openid", "email", "profile"]` that the
+    /// provider declares it supports.  If `scopes_supported` is absent the
+    /// defaults are left unchanged.
+    ///
+    /// # PKCE method selection
+    ///
+    /// When `code_challenge_methods_supported` is present and
+    /// `with_code_challenge_method` has not been called, `S256` is selected if
+    /// it appears in the list; otherwise `plain` is used.  If the field is
+    /// absent the default (`S256`) is left unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotValidUri`] if the issuer URL cannot be parsed, or
+    /// [`Error::Request`] / [`Error::InvalidResponse`] if the HTTP request or
+    /// JSON deserialization fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Endpoints are filled in automatically; only credentials are needed.
+    /// let config = OAuthConfigurationBuilder::default()
+    ///     .with_issuer("https://accounts.google.com").await?
+    ///     .with_client_id("your-client-id")
+    ///     .with_client_secret("your-client-secret")
+    ///     .with_redirect_uri("http://localhost:8080/auth/callback")
+    ///     .with_private_cookie_key("your-secret-key-at-least-32-bytes")
+    ///     .with_post_logout_redirect_uri("/")
+    ///     .with_session_max_age(30)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn with_issuer(self, issuer: &str) -> Result<Self, Error> {
+        // Normalise: strip any trailing slash so we can append the well-known
+        // path unconditionally.
+        let issuer = issuer.trim_end_matches('/');
+        let discovery_url = format!("{}/.well-known/openid-configuration", issuer);
+
+        let client = build_http_client(self.custom_ca_cert.as_deref())?;
+        let response = client
+            .get(&discovery_url)
+            .send()
+            .await
+            .map_err(Error::Request)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(Error::InvalidResponse(format!(
+                "OIDC discovery request to {discovery_url} returned HTTP {status}: {body}"
+            )));
+        }
+
+        let doc: OidcDiscovery = response.json().await.map_err(|e| {
+            Error::InvalidResponse(format!(
+                "Failed to parse OIDC discovery document from {discovery_url}: {e}"
+            ))
+        })?;
+
+        // Only fill in fields that have not already been set explicitly.
+        let authorization_endpoint = self
+            .authorization_endpoint
+            .or(Some(doc.authorization_endpoint));
+
+        let token_endpoint = self.token_endpoint.or(Some(doc.token_endpoint));
+
+        let end_session_endpoint = self.end_session_endpoint.or(doc.end_session_endpoint);
+
+        // Resolve scopes: use the discovered intersection only when the caller
+        // has not set explicit scopes.
+        let scopes = if self.scopes_explicit {
+            self.scopes
+        } else if let Some(supported) = doc.scopes_supported {
+            let defaults = ["openid", "email", "profile"];
+            let filtered: Vec<String> = defaults
+                .iter()
+                .filter(|s| supported.iter().any(|sup| sup == *s))
+                .map(|s| s.to_string())
+                .collect();
+            // Fall back to the full defaults if the intersection is empty
+            // (e.g. the provider lists scopes under different names).
+            if filtered.is_empty() {
+                self.scopes
+            } else {
+                Scopes(filtered)
+            }
+        } else {
+            self.scopes
+        };
+
+        // Resolve PKCE method: prefer S256 when supported, fall back to plain.
+        let code_challenge_method = if self.code_challenge_method_explicit {
+            self.code_challenge_method
+        } else if let Some(methods) = doc.code_challenge_methods_supported {
+            if methods.iter().any(|m| m.eq_ignore_ascii_case("S256")) {
+                CodeChallengeMethod::S256
+            } else {
+                CodeChallengeMethod::Plain
+            }
+        } else {
+            self.code_challenge_method
+        };
+
+        Ok(Self {
+            authorization_endpoint,
+            token_endpoint,
+            end_session_endpoint,
+            scopes,
+            code_challenge_method,
+            ..self
+        })
+    }
 }
 
 impl OAuthConfigurationBuilder {
@@ -352,6 +572,7 @@ impl OAuthConfigurationBuilder {
     pub fn with_code_challenge_method(self, code_challenge_method: CodeChallengeMethod) -> Self {
         Self {
             code_challenge_method,
+            code_challenge_method_explicit: true,
             ..self
         }
     }
@@ -377,6 +598,7 @@ impl OAuthConfigurationBuilder {
     pub fn with_scopes(self, scopes: Vec<&str>) -> Self {
         Self {
             scopes: Scopes(scopes.into_iter().map(String::from).collect()),
+            scopes_explicit: true,
             ..self
         }
     }
@@ -579,6 +801,320 @@ impl OAuthConfigurationBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a minimal discovery JSON document for use in tests.
+    fn discovery_json(
+        auth: &str,
+        token: &str,
+        end_session: Option<&str>,
+        scopes: Option<&[&str]>,
+        pkce_methods: Option<&[&str]>,
+    ) -> String {
+        let end_session_field = match end_session {
+            Some(url) => format!(r#","end_session_endpoint":"{}""#, url),
+            None => String::new(),
+        };
+        let scopes_field = match scopes {
+            Some(s) => {
+                let list = s
+                    .iter()
+                    .map(|v| format!(r#""{}""#, v))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(r#","scopes_supported":[{}]"#, list)
+            }
+            None => String::new(),
+        };
+        let pkce_field = match pkce_methods {
+            Some(m) => {
+                let list = m
+                    .iter()
+                    .map(|v| format!(r#""{}""#, v))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(r#","code_challenge_methods_supported":[{}]"#, list)
+            }
+            None => String::new(),
+        };
+        format!(
+            r#"{{"authorization_endpoint":"{auth}","token_endpoint":"{token}"{end_session_field}{scopes_field}{pkce_field}}}"#,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_fills_endpoints() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        let body = discovery_json(
+            &format!("{base}/oauth2/auth"),
+            &format!("{base}/oauth2/token"),
+            Some(&format!("{base}/oauth2/logout")),
+            None,
+            None,
+        );
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let builder = OAuthConfigurationBuilder::default()
+            .with_issuer(&base)
+            .await
+            .expect("with_issuer should succeed");
+
+        assert_eq!(
+            builder.authorization_endpoint.as_deref(),
+            Some(format!("{base}/oauth2/auth").as_str())
+        );
+        assert_eq!(
+            builder.token_endpoint.as_deref(),
+            Some(format!("{base}/oauth2/token").as_str())
+        );
+        assert_eq!(
+            builder.end_session_endpoint.as_deref(),
+            Some(format!("{base}/oauth2/logout").as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_does_not_overwrite_explicit_endpoints() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        let body = discovery_json(
+            &format!("{base}/discovered/auth"),
+            &format!("{base}/discovered/token"),
+            None,
+            None,
+            None,
+        );
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let builder = OAuthConfigurationBuilder::default()
+            .with_authorization_endpoint("https://manual.example.com/auth")
+            .with_token_endpoint("https://manual.example.com/token")
+            .with_issuer(&base)
+            .await
+            .expect("with_issuer should succeed");
+
+        // Manual values must survive discovery.
+        assert_eq!(
+            builder.authorization_endpoint.as_deref(),
+            Some("https://manual.example.com/auth")
+        );
+        assert_eq!(
+            builder.token_endpoint.as_deref(),
+            Some("https://manual.example.com/token")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_scopes_intersection() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        // Provider supports openid and email but NOT profile.
+        let body = discovery_json(
+            &format!("{base}/auth"),
+            &format!("{base}/token"),
+            None,
+            Some(&["openid", "email"]),
+            None,
+        );
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let builder = OAuthConfigurationBuilder::default()
+            .with_issuer(&base)
+            .await
+            .expect("with_issuer should succeed");
+
+        assert_eq!(builder.scopes.to_string(), "openid email");
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_scopes_explicit_not_overwritten() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        let body = discovery_json(
+            &format!("{base}/auth"),
+            &format!("{base}/token"),
+            None,
+            Some(&["openid"]),
+            None,
+        );
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let builder = OAuthConfigurationBuilder::default()
+            .with_scopes(vec!["openid", "email", "profile", "custom"])
+            .with_issuer(&base)
+            .await
+            .expect("with_issuer should succeed");
+
+        // Explicit scopes must be preserved unchanged.
+        assert_eq!(builder.scopes.to_string(), "openid email profile custom");
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_pkce_s256_preferred() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        let body = discovery_json(
+            &format!("{base}/auth"),
+            &format!("{base}/token"),
+            None,
+            None,
+            Some(&["plain", "S256"]),
+        );
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let builder = OAuthConfigurationBuilder::default()
+            .with_issuer(&base)
+            .await
+            .expect("with_issuer should succeed");
+
+        assert_eq!(builder.code_challenge_method, CodeChallengeMethod::S256);
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_pkce_plain_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        let body = discovery_json(
+            &format!("{base}/auth"),
+            &format!("{base}/token"),
+            None,
+            None,
+            Some(&["plain"]),
+        );
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let builder = OAuthConfigurationBuilder::default()
+            .with_issuer(&base)
+            .await
+            .expect("with_issuer should succeed");
+
+        assert_eq!(builder.code_challenge_method, CodeChallengeMethod::Plain);
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_pkce_explicit_not_overwritten() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        // Discovery says only plain is supported.
+        let body = discovery_json(
+            &format!("{base}/auth"),
+            &format!("{base}/token"),
+            None,
+            None,
+            Some(&["plain"]),
+        );
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        // But the caller explicitly requested S256.
+        let builder = OAuthConfigurationBuilder::default()
+            .with_code_challenge_method(CodeChallengeMethod::S256)
+            .with_issuer(&base)
+            .await
+            .expect("with_issuer should succeed");
+
+        assert_eq!(builder.code_challenge_method, CodeChallengeMethod::S256);
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_trailing_slash_normalised() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        let body = discovery_json(
+            &format!("{base}/auth"),
+            &format!("{base}/token"),
+            None,
+            None,
+            None,
+        );
+        // The mock is registered without trailing slash — if normalisation
+        // works correctly the request will hit this exact path.
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+
+        // Pass issuer WITH a trailing slash.
+        let result = OAuthConfigurationBuilder::default()
+            .with_issuer(&format!("{base}/"))
+            .await;
+
+        assert!(result.is_ok(), "trailing slash should be normalised");
+    }
+
+    #[tokio::test]
+    async fn test_with_issuer_http_error_propagated() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+
+        server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(404)
+            .with_body("not found")
+            .create_async()
+            .await;
+
+        let result = OAuthConfigurationBuilder::default()
+            .with_issuer(&base)
+            .await;
+
+        assert!(
+            matches!(result, Err(Error::InvalidResponse(_))),
+            "HTTP 404 should surface as InvalidResponse"
+        );
+    }
 
     #[test]
     fn test_with_private_cookie_key() {

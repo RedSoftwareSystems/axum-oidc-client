@@ -5,7 +5,7 @@ edition = "2021"
 
 # ─── Cache feature flags ──────────────────────────────────────────────────────
 #
-# Exactly one of the three cache features should be enabled at a time.
+# Exactly one of the cache features should be enabled at a time.
 # Enabling multiple explicit features (e.g. cache-l1 + cache-l2) is equivalent
 # to enabling cache-l1-l2 and will compile the two-tier implementation.
 #
@@ -16,6 +16,18 @@ edition = "2021"
 #             --features cache-l2             # Redis only
 #   cargo run --no-default-features \
 #             --features cache-l1-l2          # Moka L1 + Redis L2
+#   cargo run --no-default-features \
+#             --features cache-pg             # PostgreSQL only (no Moka L1 layer)
+#   cargo run --no-default-features \
+#             --features cache-l1-pg          # Moka L1 + PostgreSQL L2 (two-tier)
+#   cargo run --no-default-features \
+#             --features cache-mysql          # MySQL / MariaDB only (no Moka L1 layer)
+#   cargo run --no-default-features \
+#             --features cache-l1-mysql       # Moka L1 + MySQL L2 (two-tier)
+#   cargo run --no-default-features \
+#             --features cache-sqlite         # SQLite only (no external server required)
+#   cargo run --no-default-features \
+#             --features cache-l1-sqlite      # Moka L1 + SQLite L2 (two-tier)
 #
 [features]
 ## L2-only: Redis-backed session cache with no in-process layer.
@@ -26,6 +38,24 @@ cache-l1 = ["axum-oidc-client/moka-cache"]
 
 ## Two-tier: Moka L1 in front of Redis L2.
 cache-l1-l2 = ["cache-l1", "cache-l2"]
+
+## PostgreSQL-only: PostgreSQL-backed session cache with no in-process Moka layer.
+cache-pg = ["axum-oidc-client/sql-cache-postgres"]
+
+## Two-tier: Moka L1 in front of PostgreSQL L2.
+cache-l1-pg = ["cache-l1", "cache-pg"]
+
+## MySQL/MariaDB-only: MySQL-backed session cache with no in-process Moka layer.
+cache-mysql = ["axum-oidc-client/sql-cache-mysql"]
+
+## Two-tier: Moka L1 in front of MySQL L2.
+cache-l1-mysql = ["cache-l1", "cache-mysql"]
+
+## SQLite-only: SQLite-backed session cache with no in-process Moka layer.
+cache-sqlite = ["axum-oidc-client/sql-cache-sqlite"]
+
+## Two-tier: Moka L1 in front of SQLite L2.
+cache-l1-sqlite = ["cache-l1", "cache-sqlite"]
 
 ## Default: Moka in-process cache — no external backend required.
 default = ["cache-l1"]

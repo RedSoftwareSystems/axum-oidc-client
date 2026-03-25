@@ -18,13 +18,21 @@
 //!
 //! Additional variables are recognised depending on the active cache feature:
 //!
-//! | Variable            | Feature               | Description                          |
-//! |---------------------|-----------------------|--------------------------------------|
-//! | `REDIS_URL`         | `cache-l2`/`cache-l1-l2` | Redis connection URL              |
-//! | `CACHE_TTL`         | `cache-l2`/`cache-l1-l2` | Redis entry TTL in seconds        |
-//! | `L1_MAX_CAPACITY`   | `cache-l1`/`cache-l1-l2` | Moka max entries                  |
-//! | `L1_TTL_SEC`        | `cache-l1`/`cache-l1-l2` | Moka entry TTL in seconds         |
-//! | `L1_TIME_TO_IDLE_SEC` | `cache-l1`/`cache-l1-l2` | Moka idle-eviction timeout      |
+//! | Variable                      | Feature                          | Description                              |
+//! |-------------------------------|----------------------------------|------------------------------------------|
+//! | `REDIS_URL`                   | `cache-l2`/`cache-l1-l2`        | Redis connection URL                     |
+//! | `CACHE_TTL`                   | `cache-l2`/`cache-l1-l2`        | Redis entry TTL in seconds               |
+//! | `L1_MAX_CAPACITY`             | `cache-l1`/`cache-l1-l2`        | Moka max entries                         |
+//! | `L1_TTL_SEC`                  | `cache-l1`/`cache-l1-l2`        | Moka entry TTL in seconds                |
+//! | `L1_TIME_TO_IDLE_SEC`         | `cache-l1`/`cache-l1-l2`        | Moka idle-eviction timeout               |
+//! | `PG_URL`                      | `cache-pg`/`cache-l1-pg`        | PostgreSQL connection URL                |
+//! | `PG_MAX_CONNECTIONS`          | `cache-pg`/`cache-l1-pg`        | PostgreSQL pool max connections          |
+//! | `PG_CLEANUP_INTERVAL_SEC`     | `cache-pg`/`cache-l1-pg`        | Expired-row cleanup interval (sec)      |
+//! | `PG_L1_TTL_SEC`               | `cache-l1-pg`                   | Moka L1 TTL when used in front of PG    |
+//! | `MYSQL_URL`                   | `cache-mysql`/`cache-l1-mysql`  | MySQL/MariaDB connection URL             |
+//! | `MYSQL_MAX_CONNECTIONS`       | `cache-mysql`/`cache-l1-mysql`  | MySQL pool max connections               |
+//! | `MYSQL_CLEANUP_INTERVAL_SEC`  | `cache-mysql`/`cache-l1-mysql`  | Expired-row cleanup interval (sec)      |
+//! | `MYSQL_L1_TTL_SEC`            | `cache-l1-mysql`                | Moka L1 TTL when used in front of MySQL |
 
 use std::{env, path::PathBuf};
 
@@ -59,6 +67,14 @@ use std::{env, path::PathBuf};
 /// - `L1_MAX_CAPACITY` *(cache-l1 / cache-l1-l2)*
 /// - `L1_TTL_SEC` *(cache-l1 / cache-l1-l2)*
 /// - `L1_TIME_TO_IDLE_SEC` *(cache-l1 / cache-l1-l2)*
+/// - `PG_URL` *(cache-pg / cache-l1-pg)*
+/// - `PG_MAX_CONNECTIONS` *(cache-pg / cache-l1-pg)*
+/// - `PG_CLEANUP_INTERVAL_SEC` *(cache-pg / cache-l1-pg)*
+/// - `PG_L1_TTL_SEC` *(cache-l1-pg)*
+/// - `MYSQL_URL` *(cache-mysql / cache-l1-mysql)*
+/// - `MYSQL_MAX_CONNECTIONS` *(cache-mysql / cache-l1-mysql)*
+/// - `MYSQL_CLEANUP_INTERVAL_SEC` *(cache-mysql / cache-l1-mysql)*
+/// - `MYSQL_L1_TTL_SEC` *(cache-l1-mysql)*
 ///
 /// # Returns
 ///
@@ -141,6 +157,50 @@ pub fn check_env_sources() -> Vec<String> {
         }
         if env::var("L1_TIME_TO_IDLE_SEC").is_ok() {
             sources.push("L1_TIME_TO_IDLE_SEC".to_string());
+        }
+    }
+
+    // ── Cache: PostgreSQL ─────────────────────────────────────────────────────
+    #[cfg(feature = "cache-pg")]
+    {
+        if env::var("PG_URL").is_ok() {
+            sources.push("PG_URL".to_string());
+        }
+        if env::var("PG_MAX_CONNECTIONS").is_ok() {
+            sources.push("PG_MAX_CONNECTIONS".to_string());
+        }
+        if env::var("PG_CLEANUP_INTERVAL_SEC").is_ok() {
+            sources.push("PG_CLEANUP_INTERVAL_SEC".to_string());
+        }
+    }
+
+    // ── Cache: Moka L1 TTL specific to PG two-tier ───────────────────────────
+    #[cfg(all(feature = "cache-l1", feature = "cache-pg"))]
+    {
+        if env::var("PG_L1_TTL_SEC").is_ok() {
+            sources.push("PG_L1_TTL_SEC".to_string());
+        }
+    }
+
+    // ── Cache: MySQL / MariaDB ────────────────────────────────────────────────
+    #[cfg(feature = "cache-mysql")]
+    {
+        if env::var("MYSQL_URL").is_ok() {
+            sources.push("MYSQL_URL".to_string());
+        }
+        if env::var("MYSQL_MAX_CONNECTIONS").is_ok() {
+            sources.push("MYSQL_MAX_CONNECTIONS".to_string());
+        }
+        if env::var("MYSQL_CLEANUP_INTERVAL_SEC").is_ok() {
+            sources.push("MYSQL_CLEANUP_INTERVAL_SEC".to_string());
+        }
+    }
+
+    // ── Cache: Moka L1 TTL specific to MySQL two-tier ────────────────────────
+    #[cfg(all(feature = "cache-l1", feature = "cache-mysql"))]
+    {
+        if env::var("MYSQL_L1_TTL_SEC").is_ok() {
+            sources.push("MYSQL_L1_TTL_SEC".to_string());
         }
     }
 

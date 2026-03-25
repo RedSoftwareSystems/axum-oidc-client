@@ -6,7 +6,7 @@ A quick reference guide for common tasks and API usage.
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.2.1"
+axum-oidc-client = "0.3.0"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -313,6 +313,67 @@ let tenant = "common";
 
 ## Cache Implementations
 
+### SQL Cache (PostgreSQL / MySQL / SQLite)
+
+Requires one of the `sql-cache-*` feature flags. An alternative L2 backend to Redis — no extra cache server needed if you already run a SQL database.
+
+```toml
+# Choose one (or use sql-cache-all for testing):
+axum-oidc-client = { version = "0.3.0", features = ["sql-cache-sqlite"] }
+axum-oidc-client = { version = "0.3.0", features = ["sql-cache-postgres"] }
+axum-oidc-client = { version = "0.3.0", features = ["sql-cache-mysql"] }
+```
+
+```rust
+use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};
+use std::sync::Arc;
+
+// SQLite — great for development / single-instance deployments
+let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+    SqlAuthCache::new(SqlCacheConfig {
+        connection_string: "sqlite://cache.db".to_string(),
+        ..Default::default()
+    }).await?
+);
+cache.init_schema().await?; // creates table + index (idempotent)
+
+// PostgreSQL
+let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
+    SqlAuthCache::new(SqlCacheConfig {
+        connection_string: "postgresql://user:pass@localhost/mydb".to_string(),
+        max_connections: 20,
+        ..Default::default()
+    }).await?
+);
+cache.init_schema().await?;
+
+// Two-tier: Moka L1 + PostgreSQL L2
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+use axum_oidc_client::auth_cache::AuthCache;
+
+let sql = Arc::new(SqlAuthCache::new(SqlCacheConfig {
+    connection_string: "postgresql://user:pass@localhost/mydb".to_string(),
+    ..Default::default()
+}).await?);
+sql.init_schema().await?;
+
+let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
+    TwoTierAuthCache::new(Some(sql as Arc<dyn AuthCache + Send + Sync>), TwoTierCacheConfig::default())?
+);
+```
+
+**`SqlCacheConfig` fields:**
+
+| Field                    | Default        | Description                                     |
+|--------------------------|----------------|-------------------------------------------------|
+| `connection_string`      | `""` (required)| Database URL                                    |
+| `max_connections`        | `20`           | Pool max size (keep ≤ 5 for SQLite)             |
+| `min_connections`        | `2`            | Pool min idle connections                       |
+| `cleanup_interval_sec`   | `300`          | Background expired-row sweep interval           |
+| `table_name`             | `"oidc_cache"` | Cache table name (customisable)                 |
+| `acquire_timeout_sec`    | `30`           | Max wait for a pool connection                  |
+| `code_verifier_ttl_sec`  | `60`           | TTL for PKCE code-verifier entries              |
+
 ### In-Memory Cache (Moka, default)
 
 Requires the `moka-cache` feature (**enabled by default**). No external dependencies.
@@ -353,6 +414,8 @@ let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> =
 ```
 
 ### Custom Cache
+
+Implement the `AuthCache` trait directly for any storage backend:
 
 ```rust
 use axum_oidc_client::auth_cache::AuthCache;
@@ -785,5 +848,5 @@ openssl rand -hex 32
 
 ---
 
-**Version:** 0.2.1  
+**Version:** 0.3.0  
 **Last Updated:** 2026-03-04

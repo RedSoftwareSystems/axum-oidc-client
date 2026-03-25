@@ -157,7 +157,7 @@ async fn main() {
 
     // Build the auth cache.  The concrete implementation is chosen at compile
     // time by the active cache feature flag (cache-l2 / cache-l1 / cache-l1-l2).
-    let cache = cache::build_cache(&args);
+    let cache = cache::build_cache(&args).await;
 
     let config_arc = Arc::new(config);
 
