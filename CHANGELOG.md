@@ -5,52 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Changed
-
-- **PostgreSQL cache table is now `UNLOGGED`** (`sql_cache` module): `SqlAuthCache::init_schema()` now creates the cache table as `CREATE UNLOGGED TABLE IF NOT EXISTS …` on PostgreSQL. `UNLOGGED` tables bypass WAL (Write-Ahead Log) writes, giving significantly higher write throughput and lower I/O, at the cost of the table being truncated automatically after a crash or unclean shutdown. This is the correct trade-off for a cache: the data held (PKCE code verifiers and auth sessions) is ephemeral and does not need to survive a crash — on restart the application simply re-authenticates any affected sessions. MySQL/MariaDB and SQLite backends are unaffected and continue to use regular tables.
-
-### Documentation
-
-- **PostgreSQL `VACUUM` guidance added** (`sql_cache` module): documented the MVCC dead-tuple problem that arises on high-churn cache tables and the recommended mitigations:
-  - Tune `autovacuum` aggressively per-table via `ALTER TABLE oidc_cache SET (autovacuum_vacuum_scale_factor = 0.01, …)` so it fires more frequently than the global default (20 % row-change threshold).
-  - Use `VACUUM oidc_cache` or `VACUUM ANALYZE oidc_cache` for routine scheduled maintenance; reserve `VACUUM FULL` for maintenance windows only (it takes an `ACCESS EXCLUSIVE` lock).
-  - Provided a system-cron example (`0 3 * * *  psql … -c "VACUUM ANALYZE oidc_cache;"`) for scheduling outside the database.
-  - Provided a `pg_cron` example (`SELECT cron.schedule(…)`) for scheduling entirely inside PostgreSQL without an external cron daemon.
-  - Added a note clarifying that `UNLOGGED` + regular `VACUUM` is the optimal combination: `UNLOGGED` skips WAL writes for all DML, and `VACUUM` itself is not WAL-logged either, giving the best trade-off between write performance, storage efficiency, and query-planner accuracy.
-  - Updated: `src/sql_cache/cleanup.rs` (new `## PostgreSQL: VACUUM after bulk deletes` section), `src/sql_cache/mod.rs` (new `# PostgreSQL: VACUUM after bulk deletes` section), `DOCUMENTATION.md`, and `README.md`.
-
-## [0.3.0] - 2026-03-04
+## [0.3.0] - 2026-03-25
 
 ### Added
 
-- **SQL cache backend** (`sql_cache` module) — implements the `AuthCache` trait for SQL databases via [`sqlx`](https://crates.io/crates/sqlx), providing an alternative L2 backend to Redis:
-  - `SqlAuthCache` — the main cache struct; constructed with `SqlAuthCache::new(config).await?` and initialised with `cache.init_schema().await?`
-  - `SqlCacheConfig` — configuration struct with fields: `connection_string`, `max_connections`, `min_connections`, `cleanup_interval_sec`, `table_name`, `acquire_timeout_sec`, `code_verifier_ttl_sec`
-  - Three database backends, each selected via a Cargo feature flag:
-    - `sql-cache-postgres` — PostgreSQL via `sqlx`; uses `INSERT … ON CONFLICT … DO UPDATE` for upserts
-    - `sql-cache-mysql` — MySQL / MariaDB via `sqlx`; uses `INSERT … ON DUPLICATE KEY UPDATE` for upserts
-    - `sql-cache-sqlite` — SQLite via `sqlx`; uses `INSERT OR REPLACE` for upserts; ideal for development and single-instance deployments
-    - `sql-cache-all` — convenience feature enabling all three backends at once (useful for testing)
-  - Single unified cache table (`oidc_cache` by default, configurable via `SqlCacheConfig::table_name`):
-    ```sql
-    CREATE TABLE IF NOT EXISTS oidc_cache (
-        cache_key   VARCHAR(255) PRIMARY KEY,
-        cache_value TEXT         NOT NULL,
-        expires_at  BIGINT       NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_oidc_cache_expires ON oidc_cache (expires_at);
-    ```
-  - Key prefixes: `cv:{state}` for PKCE code verifiers, `session:{id}` for auth sessions (JSON-serialised)
-  - **Lazy expiry**: all reads include `AND expires_at > <now>` so expired rows are never returned even before cleanup runs
-  - **Background cleanup task**: a Tokio task spawned automatically in `SqlAuthCache::new` purges expired rows in bounded batches of 1 000 rows; interval is configurable; the task can be stopped gracefully via `SqlAuthCache::shutdown()`
-  - Fully composable with `TwoTierAuthCache`: pass a `SqlAuthCache` as the L2 backend to get Moka L1 + SQL L2 two-tier caching
-  - New submodules (all `pub`): `sql_cache::schema` (DDL strings), `sql_cache::queries` (ANSI SQL + per-db UPSERT helpers), `sql_cache::cleanup` (background task)
-  - New dependency: `sqlx = { version = "0.8", features = ["runtime-tokio", "chrono"] }` (optional, pulled in only when a `sql-cache-*` feature is enabled)
-  - New dependency: `tokio-util = { version = "0.7", features = ["rt"] }` (for `CancellationToken` used by the cleanup task)
-  - New dependency: `tracing = { version = "0.1" }` (for structured logging in the cleanup task)
-  - 24 integration tests in `tests/sql_cache_sqlite.rs` covering: schema idempotency, code-verifier and session CRUD, upsert, key-prefix isolation, custom table name, concurrent reads/writes, TTL extension, error paths, two-tier integration (Moka L1 + SQLite L2), and graceful shutdown
+- **SQL cache backend** (`sql_cache` module) — `AuthCache` trait implementation for SQL databases via `sqlx`:
+  - `SqlAuthCache` / `SqlCacheConfig`; three backends selectable via Cargo feature flags: `sql-cache-postgres`, `sql-cache-mysql`, `sql-cache-sqlite`, `sql-cache-all`
+  - Unified `oidc_cache` table with lazy expiry (`expires_at` guard on every read) and a background cleanup task (bounded batch deletes, graceful shutdown via `SqlAuthCache::shutdown()`)
+  - Composable with `TwoTierAuthCache` as the L2 backend
+  - New optional dependencies: `sqlx 0.8`, `tokio-util 0.7`, `tracing 0.1`
+  - 24 integration tests in `tests/sql_cache_sqlite.rs`
+- **OIDC provider auto-discovery** (`auth_builder`): `OAuthConfigurationBuilder::with_issuer(issuer).await?` fetches `/.well-known/openid-configuration` and populates `authorization_endpoint`, `token_endpoint`, `end_session_endpoint`, `scopes` (intersected with `scopes_supported`), and `code_challenge_method` (S256 preferred). Explicit `with_*` setters always take precedence.
+- **`http_client` module** (`src/http_client.rs`): single crate-wide `pub fn build_http_client(custom_ca_cert: Option<&str>) -> Result<reqwest::Client, Error>`. Reads and parses the PEM file when a path is supplied, sets `use_rustls_tls()`, and returns `Error::InvalidResponse` instead of panicking. Used by both `AuthLayer::new` and `with_issuer`.
+- **SQLite `create_if_missing`** (`sql_cache`): `SqliteConnectOptions` built with `.create_if_missing(true)` so the database file is created automatically on first connection.
+- **Code-verifier single-use enforcement** (`auth_router/handle_callback`): verifier is removed from cache immediately after retrieval, before the token-exchange request, preventing replay on error.
+
+### Changed
+
+- **PostgreSQL cache table is now `UNLOGGED`** (`sql_cache`): `init_schema()` uses `CREATE UNLOGGED TABLE IF NOT EXISTS` on PostgreSQL, bypassing WAL for higher write throughput. Data is ephemeral; MySQL/SQLite backends unaffected.
+- **`AuthLayer::new`** (`auth.rs`): inline `match`/`unwrap` client construction replaced with `build_http_client(…).expect(…)`.
+- **`build_cache`** (`examples/sample-server`): all variants are now `async fn`; `Handle::current().block_on(…)` removed, eliminating the "Cannot start a runtime from within a runtime" panic.
+
+### Fixed
+
+- **MySQL Docker stack** (`docker/docker-compose.mysql.yml`): replaced deprecated `--slow-query-log-file=/dev/stdout` (→ `--log-output=TABLE`), `--innodb-log-file-size` (→ `--innodb-redo-log-capacity`), and `--default-authentication-plugin` (→ `--authentication-policy`); fixed healthcheck `CMD-SHELL` multi-line block (→ `CMD` list).
+- **Cron sidecars** (`pg-vacuum-cron`, `mysql-optimize-cron`, `sqlite-vacuum-cron`): BusyBox `crond` requires root; `USER cronuser` removed, `su-exec` added, crontab written to `/etc/crontabs/cronuser`, job prefixed with `su-exec cronuser` so client processes run unprivileged.
+
+### Documentation
+
+- **PostgreSQL `VACUUM` guidance** (`sql_cache`): documented autovacuum per-table tuning, `VACUUM ANALYZE` scheduling (system cron and `pg_cron`), and the `UNLOGGED` + `VACUUM` trade-off.
+
+### Added (sample-server example)
+
+- **Redis Docker stack**: `docker/docker-compose.redis.yml` — Redis 7-alpine, `allkeys-lru`, 256 MB, no persistence. `make redis-up/down/destroy/logs/ps/shell`. `.env.redis.example`.
+- **SQLite vacuum sidecar**: `docker/sqlite-vacuum-cron/` — `VACUUM` + `PRAGMA optimize` on a cron schedule, mirroring PG and MySQL sidecars.
+- **Naming consistency**: `docker-compose.yml` → `docker-compose.postgres.yml`; `vacuum-cron` → `pg-vacuum-cron`; `optimize-cron` → `mysql-optimize-cron`; Makefile `db-*` → `pg-*`; `run-l2`/`run-l1-l2` → `run-redis`/`run-l1-redis` (and `dev-*`, `build-*`); `redis-cli` → `redis-shell`.
 
 ## [0.2.1] - 2026-03-04
 
