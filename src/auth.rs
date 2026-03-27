@@ -454,45 +454,24 @@ where
             .get(SESSION_KEY)
             .map(|cookie| cookie.value().to_string());
 
-        // Build the auth routes dynamically based on base_path from configuration
         let base_path = &configuration.base_path;
         let auth_route = base_path.clone();
         let callback_route = format!("{}/callback", base_path);
         let logout_route = format!("{}/logout", base_path);
 
         match path.as_str() {
-            p if p == auth_route => Box::pin(async move {
-                match handle_auth(configuration, cache).await {
-                    Ok(response) => Ok(response),
-                    Err(err) => Ok(err.into_response()),
-                }
-            }),
+            p if p == auth_route => {
+                Box::pin(async move { Ok(dispatch_auth(configuration, cache).await) })
+            }
             p if p == callback_route => {
                 let (mut parts, _) = request.into_parts();
-                Box::pin(async move {
-                    match handle_callback(&mut parts, uri).await {
-                        Ok(response) => Ok(response),
-                        Err(err) => match err {
-                            Error::MissingCodeVerifier => {
-                                Ok((jar, Redirect::temporary("/MissingCodeVerifier"))
-                                    .into_response())
-                            }
-                            _ => Ok(err.into_response()),
-                        },
-                    }
-                })
+                Box::pin(async move { Ok(dispatch_callback(&mut parts, uri, jar).await) })
             }
             p if p == logout_route => {
                 let (mut parts, _) = request.into_parts();
                 let logout_handler = self.logout_handler.clone();
                 Box::pin(async move {
-                    match logout_handler
-                        .handle_logout(&mut parts, configuration, cache)
-                        .await
-                    {
-                        Ok(response) => Ok(response),
-                        Err(err) => Ok(err.into_response()),
-                    }
+                    Ok(dispatch_logout(&mut parts, configuration, cache, logout_handler).await)
                 })
             }
             _ => {
@@ -505,83 +484,56 @@ where
     }
 }
 
+// ── Route dispatch helpers ────────────────────────────────────────────────────
+//
+// Each helper owns its async logic and returns a `Response` directly, so the
+// `Service::call` match arms are reduced to a single `Ok(dispatch_*(…).await)`.
+// Error-to-response conversion is centralised here instead of being repeated
+// inline for every arm.
+
+async fn dispatch_auth(
+    configuration: Arc<OAuthConfiguration>,
+    cache: Arc<dyn AuthCache + Send + Sync>,
+) -> Response {
+    handle_auth(configuration, cache)
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
+async fn dispatch_callback(
+    parts: &mut http::request::Parts,
+    uri: axum::http::Uri,
+    jar: PrivateCookieJar<Key>,
+) -> Response {
+    match handle_callback(parts, uri).await {
+        Ok(response) => response,
+        Err(Error::MissingCodeVerifier) => {
+            (jar, Redirect::temporary("/MissingCodeVerifier")).into_response()
+        }
+        Err(err) => err.into_response(),
+    }
+}
+
+async fn dispatch_logout(
+    parts: &mut http::request::Parts,
+    configuration: Arc<OAuthConfiguration>,
+    cache: Arc<dyn AuthCache + Send + Sync>,
+    logout_handler: Arc<dyn LogoutHandler>,
+) -> Response {
+    logout_handler
+        .handle_logout(parts, configuration, cache)
+        .await
+        .unwrap_or_else(IntoResponse::into_response)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::auth_session::AuthSession;
 
-    // Mock cache for testing
-    #[allow(dead_code)]
-    struct MockCache;
-
-    impl AuthCache for MockCache {
-        fn get_code_verifier(
-            &self,
-            _challenge_state: &str,
-        ) -> BoxFuture<'_, Result<Option<String>, Error>> {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn set_code_verifier(
-            &self,
-            _challenge_state: &str,
-            _code_verifier: &str,
-        ) -> BoxFuture<'_, Result<(), Error>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn invalidate_code_verifier(
-            &self,
-            _challenge_state: &str,
-        ) -> BoxFuture<'_, Result<(), Error>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn get_auth_session(&self, _id: &str) -> BoxFuture<'_, Result<Option<AuthSession>, Error>> {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn set_auth_session(
-            &self,
-            _id: &str,
-            _session: AuthSession,
-        ) -> BoxFuture<'_, Result<(), Error>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn invalidate_auth_session(&self, _id: &str) -> BoxFuture<'_, Result<(), Error>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn extend_auth_session(&self, _id: &str, _ttl: i64) -> BoxFuture<'_, Result<(), Error>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    fn create_test_config() -> OAuthConfiguration {
-        use axum_extra::extract::cookie::Key;
-        OAuthConfiguration {
-            private_cookie_key: Key::from(&[0u8; 64]),
-            client_id: "test-client".to_string(),
-            client_secret: "test-secret".to_string(),
-            redirect_uri: "http://localhost:8080/auth/callback".to_string(),
-            authorization_endpoint: "http://localhost/auth".to_string(),
-            token_endpoint: "http://localhost/token".to_string(),
-            end_session_endpoint: None,
-            post_logout_redirect_uri: "/".to_string(),
-            scopes: "openid email".to_string(),
-            code_challenge_method: CodeChallengeMethod::S256,
-            session_max_age: 30,
-            token_max_age: Some(60),
-            custom_ca_cert: None,
-            base_path: "/auth".to_string(),
-        }
-    }
+    use crate::auth_router::test_helpers::create_test_config;
 
     #[test]
     fn test_default_base_path() {
         let config = create_test_config();
-
         assert_eq!(config.base_path, "/auth");
     }
 
@@ -589,7 +541,6 @@ mod tests {
     fn test_custom_base_path() {
         let mut config = create_test_config();
         config.base_path = "/api/auth".to_string();
-
         assert_eq!(config.base_path, "/api/auth");
     }
 
@@ -597,7 +548,6 @@ mod tests {
     fn test_base_path_can_be_customized() {
         let mut config = create_test_config();
         config.base_path = "/oauth".to_string();
-
         assert_eq!(config.base_path, "/oauth");
     }
 
