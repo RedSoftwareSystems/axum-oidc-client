@@ -5,7 +5,8 @@
 //!
 //! # Main Types
 //!
-//! - [`AuthLayer`] - Tower layer for adding authentication to your Axum app
+//! - [`AuthenticationLayer`] - Tower layer for adding authentication to your Axum app
+//! - [`AuthLayer`] - Backward-compatible alias for [`AuthenticationLayer`]
 //! - [`OAuthConfiguration`] - Configuration for OAuth2 endpoints and credentials
 //! - [`CodeChallengeMethod`] - PKCE code challenge method (S256 or Plain)
 //! - [`LogoutHandler`] - Trait for implementing custom logout behavior
@@ -15,7 +16,7 @@
 //! ```rust,no_run
 //! use axum::{Router, routing::get};
 //! use axum_oidc_client::{
-//!     auth::{AuthLayer, CodeChallengeMethod},
+//!     auth::{AuthenticationLayer, CodeChallengeMethod},
 //!     auth_builder::OAuthConfigurationBuilder,
 //!     auth_cache::AuthCache,
 //!     // `TwoTierAuthCache` requires the `moka-cache` feature (enabled by default).
@@ -47,7 +48,7 @@
 //!
 //! let app: Router<()> = Router::new()
 //!     .route("/", get(|| async { "Hello!" }))
-//!     .layer(AuthLayer::new(Arc::new(config), cache, logout_handler));
+//!     .layer(AuthenticationLayer::new(Arc::new(config), cache, logout_handler));
 //! # Ok(())
 //! # }
 //! ```
@@ -357,15 +358,31 @@ pub trait LogoutHandler: Send + Sync {
     ) -> BoxFuture<'a, Result<Response, Error>>;
 }
 
+/// The primary Tower [`Layer`] that adds OAuth2/OIDC authentication to an Axum
+/// application.
+///
+/// Intercepts every incoming request and dispatches it to one of three
+/// built-in auth routes (login, callback, logout) or forwards it to the inner
+/// service with session-cookie renewal applied.
+///
+/// # Backward compatibility
+///
+/// The type alias [`AuthLayer`] is provided so existing code that already
+/// imports `auth::AuthLayer` continues to compile without modification.
 #[derive(Clone)]
-pub struct AuthLayer {
+pub struct AuthenticationLayer {
     oauth_client: Arc<Client>,
     configuration: Arc<OAuthConfiguration>,
     cache: Arc<dyn AuthCache + Send + Sync>,
     logout_handler: Arc<dyn LogoutHandler>,
 }
 
-impl AuthLayer {
+/// Backward-compatible alias for [`AuthenticationLayer`].
+///
+/// Existing code using `AuthLayer` does not need to change.
+pub type AuthLayer = AuthenticationLayer;
+
+impl AuthenticationLayer {
     pub fn new(
         configuration: Arc<OAuthConfiguration>,
         cache: Arc<dyn AuthCache + Send + Sync>,
@@ -383,9 +400,10 @@ impl AuthLayer {
         }
     }
 
-    /// Create a new AuthLayer with a custom logout handler
+    /// Create a new [`AuthenticationLayer`] with a custom logout handler.
     ///
-    /// This is an alias for `new()` and is provided for backwards compatibility.
+    /// This is an alias for [`new()`](Self::new) and is provided for backwards
+    /// compatibility.
     pub fn with_logout_handler(
         configuration: Arc<OAuthConfiguration>,
         cache: Arc<dyn AuthCache + Send + Sync>,
@@ -395,7 +413,7 @@ impl AuthLayer {
     }
 }
 
-impl<S> Layer<S> for AuthLayer {
+impl<S> Layer<S> for AuthenticationLayer {
     type Service = AuthMiddleware<S>;
 
     fn layer(&self, inner: S) -> Self::Service {

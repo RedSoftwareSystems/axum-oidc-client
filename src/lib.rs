@@ -18,7 +18,7 @@
 //! ```rust,no_run
 //! use axum::{Router, routing::get};
 //! use axum_oidc_client::{
-//!     auth::{AuthLayer, CodeChallengeMethod},
+//!     auth::{AuthenticationLayer, CodeChallengeMethod},
 //!     auth_builder::OAuthConfigurationBuilder,
 //!     auth_cache::AuthCache,
 //!     // `TwoTierAuthCache` requires the `moka-cache` feature (enabled by default).
@@ -54,7 +54,7 @@
 //! // Build your application
 //! let app: Router<()> = Router::new()
 //!     .route("/", get(|| async { "Hello, World!" }))
-//!     .layer(AuthLayer::new(Arc::new(config), cache, logout_handler));
+//!     .layer(AuthenticationLayer::new(Arc::new(config), cache, logout_handler));
 //!
 //! # Ok(())
 //! # }
@@ -62,7 +62,7 @@
 //!
 //! ## Module Overview
 //!
-//! - [`auth`]: Core authentication types and the `AuthLayer` for Axum
+//! - [`auth`]: Core authentication types and the `AuthenticationLayer` for Axum (`AuthLayer` is kept as a backward-compatible type alias)
 //! - [`auth_builder`]: Builder pattern for constructing OAuth configurations
 //! - [`auth_cache`]: Cache trait and implementations for storing auth state
 //! - [`auth_session`]: Session management and token handling

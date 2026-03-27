@@ -23,7 +23,7 @@ This document provides complete configuration examples for popular OAuth2/OIDC p
 
 ```rust
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     logout::handle_default_logout::DefaultLogoutHandler,
 };
@@ -51,7 +51,7 @@ let logout_handler = Arc::new(DefaultLogoutHandler);
 //         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
 //     ).expect("failed to build cache")
 // );
-let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
+let auth_layer = AuthenticationLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
 ### Environment Variables
@@ -91,7 +91,7 @@ SESSION_MAX_AGE=30
 
 ```rust
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     logout::handle_default_logout::DefaultLogoutHandler,
 };
@@ -119,7 +119,7 @@ let logout_handler = Arc::new(DefaultLogoutHandler);
 //         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
 //     ).expect("failed to build cache")
 // );
-let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
+let auth_layer = AuthenticationLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
 ### Environment Variables
@@ -158,7 +158,7 @@ SESSION_MAX_AGE=30
 
 ```rust
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     logout::handle_oidc_logout::OidcLogoutHandler,
 };
@@ -202,7 +202,7 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(&format!(
 //         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
 //     ).expect("failed to build cache")
 // );
-let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
+let auth_layer = AuthenticationLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
 ### Environment Variables
@@ -248,7 +248,7 @@ SESSION_MAX_AGE=30
 
 ```rust
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     logout::handle_oidc_logout::OidcLogoutHandler,
 };
@@ -291,7 +291,7 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(&format!(
 //         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
 //     ).expect("failed to build cache")
 // );
-let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
+let auth_layer = AuthenticationLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
 ### Environment Variables
@@ -336,7 +336,7 @@ SESSION_MAX_AGE=30
 
 ```rust
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     logout::handle_oidc_logout::OidcLogoutHandler,
 };
@@ -379,7 +379,7 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(&format!(
 //         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
 //     ).expect("failed to build cache")
 // );
-let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
+let auth_layer = AuthenticationLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
 ### Environment Variables
@@ -422,7 +422,7 @@ SESSION_MAX_AGE=30
 
 ```rust
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     logout::handle_oidc_logout::OidcLogoutHandler,
 };
@@ -465,7 +465,7 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(&format!(
 //         None, axum_oidc_client::cache::config::TwoTierCacheConfig::default()
 //     ).expect("failed to build cache")
 // );
-let auth_layer = AuthLayer::new(Arc::new(config), cache, logout_handler);
+let auth_layer = AuthenticationLayer::new(Arc::new(config), cache, logout_handler);
 ```
 
 ### Environment Variables

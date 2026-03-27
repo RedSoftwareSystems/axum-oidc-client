@@ -66,7 +66,7 @@ axum-oidc-client = { version = "0.3.0", features = ["moka-cache", "sql-cache-pos
 ```rust
 use axum::{Router, routing::get};
 use axum_oidc_client::{
-    auth::{AuthLayer, CodeChallengeMethod},
+    auth::{AuthenticationLayer, CodeChallengeMethod},
     auth_builder::OAuthConfigurationBuilder,
     auth_cache::AuthCache,
     logout::handle_default_logout::DefaultLogoutHandler,
@@ -105,7 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/", get(home))
         .route("/protected", get(protected))
-        .layer(AuthLayer::new(Arc::new(config), cache, logout_handler));
+        .layer(AuthenticationLayer::new(Arc::new(config), cache, logout_handler));
 
     // Start server
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
@@ -372,7 +372,7 @@ The core authentication module providing the main layer and configuration types.
 
 **Key Types:**
 
-- `AuthLayer` - Tower layer for adding authentication to your Axum app
+- `AuthenticationLayer` - Tower layer for adding authentication to your Axum app (`AuthLayer` is kept as a backward-compatible type alias)
 - `OAuthConfiguration` - Configuration for OAuth2 endpoints and credentials
 - `CodeChallengeMethod` - PKCE code challenge method (S256 or Plain)
 - `LogoutHandler` - Trait for implementing custom logout behavior
@@ -592,7 +592,7 @@ impl LogoutHandler for CustomLogoutHandler {
 
 ### Automatic Routes
 
-The `AuthLayer` automatically adds the following routes (default base path is `/auth`):
+The `AuthenticationLayer` automatically adds the following routes (default base path is `/auth`):
 
 - `GET /auth` - Initiates OAuth2 authorization flow
 - `GET /auth/callback` - OAuth2 callback endpoint (handles authorization code exchange)
@@ -818,7 +818,7 @@ You can mount authentication routes at a custom base path instead of the default
 ```rust
 use axum::{Router, routing::get};
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     logout::handle_default_logout::DefaultLogoutHandler,
 };
@@ -849,7 +849,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/", get(home))
         .route("/api/protected", get(protected))
-        .layer(AuthLayer::new(Arc::new(config), cache, logout_handler));
+        .layer(AuthenticationLayer::new(Arc::new(config), cache, logout_handler));
 
     // Routes are now available at:
     // - GET /api/auth          (start OAuth flow)

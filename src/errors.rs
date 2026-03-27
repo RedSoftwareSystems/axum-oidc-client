@@ -106,7 +106,8 @@ impl IntoResponse for Error {
                 (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
             }
             Error::HttpClientNotConfigured => {
-                let message = "HTTP Client not configured. Make sure to use AuthLayer middleware.";
+                let message =
+                    "HTTP Client not configured. Make sure to use AuthenticationLayer middleware.";
                 (axum::http::StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
             }
             // Session and authentication errors

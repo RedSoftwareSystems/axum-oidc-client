@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **PostgreSQL cache table is now `UNLOGGED`** (`sql_cache`): `init_schema()` uses `CREATE UNLOGGED TABLE IF NOT EXISTS` on PostgreSQL, bypassing WAL for higher write throughput. Data is ephemeral; MySQL/SQLite backends unaffected.
+- **`AuthLayer` renamed to `AuthenticationLayer`** (`auth.rs`): the Tower layer struct is now `AuthenticationLayer`; `pub type AuthLayer = AuthenticationLayer` is provided as a backward-compatible alias so existing code continues to compile without modification.
 - **`AuthLayer::new`** (`auth.rs`): inline `match`/`unwrap` client construction replaced with `build_http_client(…).expect(…)`.
 - **`build_cache`** (`examples/sample-server`): all variants are now `async fn`; `Handle::current().block_on(…)` removed, eliminating the "Cannot start a runtime from within a runtime" panic.
 

@@ -21,7 +21,7 @@
 //!
 //! ## Automatic Routes
 //!
-//! The following routes are automatically added by the [`axum_oidc_client::auth::AuthLayer`]:
+//! The following routes are automatically added by the [`axum_oidc_client::auth::AuthenticationLayer`] (also available as the [`axum_oidc_client::auth::AuthLayer`] alias):
 //!
 //! - `GET /auth` - Initiates OAuth2 authorization flow
 //! - `GET /auth/callback` - OAuth2 callback endpoint

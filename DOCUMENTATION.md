@@ -299,18 +299,21 @@ pub struct TwoTierCacheConfig {
 
 Core authentication types and middleware.
 
-#### `AuthLayer`
+#### `AuthenticationLayer`
 
 Tower layer that adds OAuth2 authentication to your Axum application.
 
 ```rust
-pub struct AuthLayer {
+pub struct AuthenticationLayer {
     configuration: Arc<OAuthConfiguration>,
     cache: Arc<dyn AuthCache + Send + Sync>,
     logout_handler: Arc<dyn LogoutHandler>,
 }
 
-impl AuthLayer {
+/// Backward-compatible type alias — existing code using `AuthLayer` continues to compile.
+pub type AuthLayer = AuthenticationLayer;
+
+impl AuthenticationLayer {
     pub fn new(
         configuration: Arc<OAuthConfiguration>,
         cache: Arc<dyn AuthCache + Send + Sync>,
@@ -322,13 +325,14 @@ impl AuthLayer {
 **Usage:**
 
 ```rust
-let layer = AuthLayer::new(config, cache, logout_handler);
+let layer = AuthenticationLayer::new(config, cache, logout_handler);
+// AuthLayer is a backward-compatible alias: AuthLayer::new(…) also works.
 app.layer(layer)
 ```
 
 **Methods:**
 
-- `new()` - Create a new AuthLayer
+- `new()` - Create a new `AuthenticationLayer`
 - `with_logout_handler()` - Alias for `new()` (backwards compatibility)
 
 #### `OAuthConfiguration`
@@ -855,7 +859,7 @@ async fn protected(session: AuthSession) -> String {
 ```rust
 use axum::{Router, routing::get};
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     auth_cache::AuthCache,
     cache::{TwoTierAuthCache, config::TwoTierCacheConfig},
@@ -889,7 +893,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/", get(home))
         .route("/protected", get(protected))
-        .layer(AuthLayer::new(Arc::new(config), cache, logout_handler));
+        .layer(AuthenticationLayer::new(Arc::new(config), cache, logout_handler));
 
     // Start server
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
@@ -1282,7 +1286,7 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(
 
 ## Automatic Routes
 
-The `AuthLayer` adds these routes automatically:
+The `AuthenticationLayer` adds these routes automatically (also accessible via the `AuthLayer` alias):
 
 | Route                         | Method | Description                                       |
 | ----------------------------- | ------ | ------------------------------------------------- |

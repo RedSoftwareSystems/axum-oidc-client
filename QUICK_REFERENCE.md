@@ -16,7 +16,7 @@ tokio = { version = "1", features = ["full"] }
 ```rust
 use axum::{Router, routing::get};
 use axum_oidc_client::{
-    auth::AuthLayer,
+    auth::AuthenticationLayer,
     auth_builder::OAuthConfigurationBuilder,
     logout::handle_default_logout::DefaultLogoutHandler,
     auth_session::AuthSession,
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/", get(home))
         .route("/protected", get(protected))
-        .layer(AuthLayer::new(Arc::new(config), cache, logout_handler));
+        .layer(AuthenticationLayer::new(Arc::new(config), cache, logout_handler));
 
     // 5. Start server
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
@@ -75,7 +75,8 @@ async fn protected(session: AuthSession) -> String {
 
 ```rust
 // Core
-use axum_oidc_client::auth::{AuthLayer, CodeChallengeMethod, OAuthConfiguration};
+use axum_oidc_client::auth::{AuthenticationLayer, CodeChallengeMethod, OAuthConfiguration};
+// AuthLayer is kept as a backward-compatible type alias for AuthenticationLayer
 use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
 use axum_oidc_client::auth_cache::AuthCache;
 
