@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0] - 2026-04-08
+
+### Added
+
+- **`jwt` module** (new default feature): `JwtLayer<C>`, `JwtConfiguration<C>`, `JwtConfigurationBuilder<C>` (key from secret, OIDC discovery, or JWKS URI), `OidcClaims`, `Jwk`/`Jwks`, `decode_jwt`, `decode_jwt_unverified`. Dependencies: `jsonwebtoken 10.3` (rust_crypto), `base64 0.22`.
+- **`JwtClaims<C>` / `OptionalJwtClaims<C>`** extractors (`extractors/jwt_extractors.rs`): read claims injected by `JwtLayer`; `JwtClaims` returns `401` when absent, `OptionalJwtClaims` returns `None`.
+- **`authentication` and `jwt` top-level features** added to `default`; every cache/backend feature implies `authentication`.
+
+### Changed
+
+- **Module restructure**: auth-related code moved under `src/authentication/`; backward-compat aliases preserved (`auth`, `auth_builder`, `auth_cache`, `auth_session`, `cache`, `sql_cache`, `logout`).
+- **`AuthLayer` renamed to `AuthenticationLayer`**; `pub type AuthLayer = AuthenticationLayer` alias provided.
+- **`AuthMiddleware::call`** refactored into `dispatch_auth`, `dispatch_callback`, `dispatch_logout` helpers.
+- **Edition** updated `2021` → `2024`.
+
+### Fixed
+
+- **`MissingCodeVerifier`**: removed erroneous redirect to `/MissingCodeVerifier`; now returns `400 Bad Request`.
+- **`TwoTierAuthCache` code-verifier strategy** (`authentication/moka/two_tier.rs`): code verifiers now follow the same cache-aside pattern as auth sessions — L2 is written first (source of truth), L1 is written afterwards; reads check L1 first and fall back to L2 on a miss. Previously, code verifiers were stored exclusively in L1 even in two-tier mode, causing PKCE failures in multi-process deployments where the OAuth callback could be handled by a different instance than the one that initiated the flow.
+- **`TwoTierAuthCache::get_code_verifier` L1 promotion removed**: on an L2 hit, the value is no longer promoted to L1. Code verifiers are single-use — `invalidate_code_verifier` is called immediately after `get_code_verifier` in the callback handler — so caching the value in L1 between those two calls would be wasted work.
+
 ## [0.3.0] - 2026-03-25
 
 ### Added
@@ -25,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PostgreSQL cache table is now `UNLOGGED`** (`sql_cache`): `init_schema()` uses `CREATE UNLOGGED TABLE IF NOT EXISTS` on PostgreSQL, bypassing WAL for higher write throughput. Data is ephemeral; MySQL/SQLite backends unaffected.
 - **`AuthLayer` renamed to `AuthenticationLayer`** (`auth.rs`): the Tower layer struct is now `AuthenticationLayer`; `pub type AuthLayer = AuthenticationLayer` is provided as a backward-compatible alias so existing code continues to compile without modification.
 - **`AuthLayer::new`** (`auth.rs`): inline `match`/`unwrap` client construction replaced with `build_http_client(…).expect(…)`.
-- **`build_cache`** (`examples/sample-server`): all variants are now `async fn`; `Handle::current().block_on(…)` removed, eliminating the "Cannot start a runtime from within a runtime" panic.
+- **`build_cache`** (`examples/www-server`): all variants are now `async fn`; `Handle::current().block_on(…)` removed, eliminating the "Cannot start a runtime from within a runtime" panic.
 
 ### Fixed
 
@@ -36,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **PostgreSQL `VACUUM` guidance** (`sql_cache`): documented autovacuum per-table tuning, `VACUUM ANALYZE` scheduling (system cron and `pg_cron`), and the `UNLOGGED` + `VACUUM` trade-off.
 
-### Added (sample-server example)
+### Added (www-server example)
 
 - **Redis Docker stack**: `docker/docker-compose.redis.yml` — Redis 7-alpine, `allkeys-lru`, 256 MB, no persistence. `make redis-up/down/destroy/logs/ps/shell`. `.env.redis.example`.
 - **SQLite vacuum sidecar**: `docker/sqlite-vacuum-cron/` — `VACUUM` + `PRAGMA optimize` on a cron schedule, mirroring PG and MySQL sidecars.
@@ -156,8 +179,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Logout handler selection guidance
 
 - Updated example configuration files:
-  - `examples/sample-server/src/config.rs`: Added clarifying comments for `end_session_endpoint`
-  - `examples/sample-server/src/env.rs`: Updated environment variable documentation
+  - `examples/www-server/src/config.rs`: Added clarifying comments for `end_session_endpoint`
+  - `examples/www-server/src/env.rs`: Updated environment variable documentation
 
 ## [0.1.0] - 2026
 

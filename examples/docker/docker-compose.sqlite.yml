@@ -1,0 +1,242 @@
+# docker-compose.sqlite.yml — SQLite volume + maintenance cron + api-server + www-server
+#
+# Services
+# ────────
+#   sqlite-vacuum-cron – A lightweight Alpine-based container that runs
+#                        `VACUUM` and `PRAGMA optimize` against the SQLite
+#                        database file every day at midnight (UTC by default).
+#
+#                        Why both?
+#                        • VACUUM          – rewrites the database into a new
+#                          compacted file, returning all free pages (left by
+#                          DELETE operations) to the OS.  SQLite does not have
+#                          a background purge thread — free pages accumulate
+#                          until VACUUM runs.
+#                        • PRAGMA optimize – SQLite's lightweight equivalent of
+#                          ANALYZE.  Refreshes query-planner statistics for any
+#                          table whose statistics are stale, without rewriting
+#                          the database file.  Keeps the planner accurate after
+#                          large expiry waves.
+#
+#   sqlite-tools       – A minimal Alpine container with the sqlite package
+#                        installed.  Used exclusively by `make sqlite-shell` to
+#                        open an interactive sqlite3 session against the cache
+#                        database file.  It does NOT run persistently —
+#                        `docker compose run --rm` starts and removes it on
+#                        demand.
+#   api-server         – JWT-validated API server (internal only, port 8181).
+#   www-server         – OAuth2 / OIDC front-end, exposed on host port 8080.
+#                        Uses SQLite as the session-cache backend
+#                        (cache-sqlite or cache-l1-sqlite).
+#
+# Why a Compose file for SQLite?
+# ──────────────────────────────
+#   SQLite is a file-based database — there is no server process to manage.
+#   This Compose file exists to:
+#     1. Define the `sqlite_data` named volume that persists the database file
+#        across container and host restarts.
+#     2. Run the `sqlite-vacuum-cron` sidecar for scheduled maintenance.
+#     3. Provide the `sqlite-tools` one-shot service so `make sqlite-shell`
+#        gives an interactive sqlite3 REPL without requiring sqlite3 to be
+#        installed on the host.
+#
+#   The www-server binary connects directly to the SQLite file via sqlx
+#   using the path mounted from the `sqlite_data` volume.
+#
+# Quick start
+# ───────────
+#   # 1. Start the volume + vacuum-cron sidecar + application services
+#   docker compose -f docker/docker-compose.sqlite.yml up -d
+#   # or: make sqlite-up && make run-sqlite
+#
+#   # 2. (Optional) Open an interactive sqlite3 shell
+#   make sqlite-shell
+#
+#   # 3. (Optional) Run VACUUM + PRAGMA optimize manually
+#   make sqlite-vacuum
+#
+# Environment variables (override in .env.local or shell)
+# ────────────────────────────────────────────────────────
+#   SQLITE_DB_PATH   – absolute path to the database file inside the container
+#                      (default: /data/oidc_cache.db)
+#   VACUUM_SCHEDULE  – cron expression for the vacuum job (default: 0 0 * * *)
+#                      Override to test more frequently: "*/5 * * * *"
+#
+# Application environment variables (set in shared .env.local / DOTENV_FILE)
+# ────────────────────────────────────────────────────────────────────────────
+#   OAUTH_ISSUER              – OIDC issuer URL (used by both servers)
+#   OAUTH_CLIENT_ID           – OAuth2 client ID (www-server)
+#   OAUTH_CLIENT_SECRET       – OAuth2 client secret (www-server)
+#   OAUTH_REDIRECT_URI        – callback URI (www-server)
+#   PRIVATE_COOKIE_KEY        – session encryption key (www-server)
+#   SQLITE_URL                – SQLite connection URL
+#                               (default: sqlite:////data/oidc_cache.db)
+#   WWW_FEATURES              – cache feature compiled into www-server image
+#                               (default: cache-l1-sqlite — Moka L1 + SQLite L2)
+#
+# No database credentials are required — SQLite uses filesystem permissions.
+
+name: axum-oidc-sqlite
+
+# ─── Shared application environment ──────────────────────────────────────────
+# Common OIDC / OAuth2 variables read by both application services.
+# Values are resolved from the shell environment or the --env-file passed to
+# `docker compose`.  Secrets should never be hard-coded here.
+x-app-env: &app-env
+  OAUTH_ISSUER: ${OAUTH_ISSUER:-}
+  OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-}
+  OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
+  OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-http://localhost:8080/auth/callback}
+  PRIVATE_COOKIE_KEY: ${PRIVATE_COOKIE_KEY:-change-me-in-production}
+
+services:
+
+  # ── sqlite-vacuum-cron ────────────────────────────────────────────────────────
+  #
+  # Runs VACUUM + PRAGMA optimize on a schedule to keep the database file
+  # compact and the query planner statistics fresh.
+  #
+  # Why a separate container rather than a host cron job?
+  #   • Keeps all maintenance logic self-contained and version-controlled
+  #     alongside the rest of the stack.
+  #   • Observable via `docker compose logs sqlite-vacuum-cron`.
+  #   • Portable — works the same way on any host that runs Docker.
+  #   • VACUUM acquires an EXCLUSIVE lock for its duration; running it from a
+  #     separate container makes the maintenance window explicit and observable.
+  sqlite-vacuum-cron:
+    build:
+      context: ./sqlite-vacuum-cron
+      dockerfile: Dockerfile
+    container_name: oidc-sqlite-vacuum-cron
+
+    environment:
+      SQLITE_DB_PATH: ${SQLITE_DB_PATH:-/data/oidc_cache.db}
+      # 5-field cron expression: minute hour dom month dow
+      # Default: every day at midnight UTC
+      VACUUM_SCHEDULE: ${VACUUM_SCHEDULE:-0 0 * * *}
+
+    volumes:
+      # Mount the same named volume the www-server writes to so the
+      # vacuum job operates on the live database file.
+      - sqlite_data:/data
+
+    networks:
+      - oidc-sqlite-net
+
+  # ── api-server ────────────────────────────────────────────────────────────────
+  #
+  # JWT-validated API server.  Validates Bearer tokens issued by the OIDC
+  # provider specified in OAUTH_ISSUER.  Not exposed to the host — reachable
+  # only from www-server via the internal oidc-sqlite-net network.
+  api-server:
+    build:
+      # Build context must be the repository root so the workspace path
+      # `path = "../.."` in Cargo.toml resolves correctly.
+      context: ../..
+      dockerfile: examples/api-server/Dockerfile
+    image: axum-api-server:latest
+    container_name: oidc-api-server
+
+    environment:
+      <<: *app-env
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8181"
+
+    # No host-port mapping — the service is intentionally internal only.
+    expose:
+      - "8181"
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8181/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - oidc-sqlite-net
+
+  # ── www-server ────────────────────────────────────────────────────────────────
+  #
+  # OAuth2 / OIDC front-end.  Uses SQLite as the session-cache backend.
+  # Exposed on host port 8080 — the only service reachable from outside.
+  www-server:
+    build:
+      context: ../..
+      dockerfile: examples/www-server/Dockerfile
+      args:
+        # Build with Moka L1 + SQLite L2 two-tier cache by default.
+        # Override: WWW_FEATURES=cache-sqlite docker compose up --build
+        FEATURES: ${WWW_FEATURES:-cache-l1-sqlite}
+    image: axum-www-server:sqlite-latest
+    container_name: oidc-www-server
+
+    environment:
+      <<: *app-env
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8080"
+      # Point www-server's reverse proxy at the api-server service name.
+      API_SERVER: "http://api-server:8181"
+      # SQLite session cache — the database file is in the shared volume.
+      SQLITE_URL: ${SQLITE_URL:-sqlite:////data/oidc_cache.db}
+
+    ports:
+      - "${WWW_PORT:-8080}:8080"
+
+    volumes:
+      # Mount the same named volume as sqlite-vacuum-cron so the database
+      # file is shared between the application and the maintenance sidecar.
+      - sqlite_data:/data
+
+    depends_on:
+      sqlite-vacuum-cron:
+        condition: service_started
+      api-server:
+        condition: service_started
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+    networks:
+      - oidc-sqlite-net
+
+  # ── sqlite-tools (one-shot helper) ───────────────────────────────────────────
+  #
+  # This service is NOT started by `docker compose up`.  It is invoked on demand
+  # via `docker compose run --rm sqlite-tools sqlite3 /data/oidc_cache.db`.
+  #
+  # The Alpine `sqlite` package provides the sqlite3 CLI tool (~900 KB).
+  # No entrypoint is set so the service can be used as a general-purpose
+  # sqlite3 wrapper for any command the operator needs to run.
+  sqlite-tools:
+    image: alpine:3.21
+    container_name: oidc-sqlite-tools
+    # Install sqlite3 at runtime to keep the image declaration simple.
+    # Alpine's package cache is cleared to keep the layer small.
+    entrypoint: >
+      sh -c "apk add --no-cache sqlite && exec \"$@\"" --
+    volumes:
+      # Mount the named volume at /data so sqlite3 can open the cache file.
+      - sqlite_data:/data
+    networks:
+      - oidc-sqlite-net
+    # Prevent this service from starting as part of `docker compose up -d`.
+    profiles:
+      - tools
+
+# ─── Named volumes ────────────────────────────────────────────────────────────
+volumes:
+  sqlite_data:
+    driver: local
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+# A bridge network is defined so sqlite-vacuum-cron and sqlite-tools share the
+# same compose namespace.  No TCP connections are made — both containers access
+# SQLite purely through the shared sqlite_data volume.
+networks:
+  oidc-sqlite-net:
+    driver: bridge

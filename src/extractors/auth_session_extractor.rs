@@ -7,7 +7,7 @@ use futures_util::future::BoxFuture;
 use std::ops::Deref;
 
 use super::shared::extract_auth_session;
-use crate::auth_session::AuthSession;
+use crate::authentication::session::AuthSession;
 
 impl<S> FromRequestParts<S> for AuthSession
 where

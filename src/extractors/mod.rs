@@ -174,8 +174,10 @@
 //!   (handled by the cache layer)
 
 mod auth_session_extractor;
+mod jwt_extractors;
 mod shared;
 mod token_extractors;
 
 pub use auth_session_extractor::OptionalAuthSession;
+pub use jwt_extractors::{JwtClaims, OptionalJwtClaims};
 pub use token_extractors::{AccessToken, IdToken, OptionalAccessToken, OptionalIdToken};

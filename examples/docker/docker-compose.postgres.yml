@@ -1,0 +1,246 @@
+# docker-compose.postgres.yml — PostgreSQL 18 + nightly VACUUM cron + api-server + www-server
+#
+# Services
+# ────────
+#   postgres       – PostgreSQL 18 with autovacuum aggressively tuned for the
+#                    `oidc_cache` table (high-churn ephemeral PKCE/session data).
+#   pg-vacuum-cron – A lightweight Alpine-based container that runs a
+#                    `VACUUM ANALYZE oidc_cache` job every day at midnight
+#                    (00:00 server time, UTC by default).
+#   api-server     – JWT-validated API server (internal only, port 8181).
+#   www-server     – OAuth2 / OIDC front-end, exposed on host port 8080.
+#                    Uses PostgreSQL as the session-cache backend
+#                    (cache-pg or cache-l1-pg).
+#
+# Quick start
+# ───────────
+#   cp .env.postgres.example .env.local
+#   # edit .env.local with real OAuth2 credentials
+#   docker compose -f ../docker/docker-compose.postgres.yml up -d
+#
+# Environment variables (override in .env.local or shell)
+# ────────────────────────────────────────────────────────
+#   POSTGRES_USER        – superuser name            (default: oidc_user)
+#   POSTGRES_PASSWORD    – superuser password        (default: oidc_pass)
+#   POSTGRES_DB          – database name             (default: oidc_cache)
+#   POSTGRES_PORT        – host-side port mapping    (default: 5432)
+#   VACUUM_SCHEDULE      – cron expression for VACUUM (default: 0 0 * * *)
+#                          Override to test more frequently, e.g. "*/5 * * * *"
+#
+# Application environment variables (set in shared .env.local / DOTENV_FILE)
+# ────────────────────────────────────────────────────────────────────────────
+#   OAUTH_ISSUER              – OIDC issuer URL (used by both servers)
+#   OAUTH_CLIENT_ID           – OAuth2 client ID (www-server)
+#   OAUTH_CLIENT_SECRET       – OAuth2 client secret (www-server)
+#   OAUTH_REDIRECT_URI        – callback URI (www-server)
+#   PRIVATE_COOKIE_KEY        – session encryption key (www-server)
+#   PG_URL                    – PostgreSQL connection URL
+#                               (default: postgresql://oidc_user:oidc_pass@postgres:5432/oidc_cache)
+#   WWW_FEATURES              – cache feature compiled into www-server image
+#                               (default: cache-l1-pg — Moka L1 + PostgreSQL L2)
+
+name: axum-oidc-postgres
+
+# ─── Shared application environment ──────────────────────────────────────────
+# Common OIDC / OAuth2 variables read by both application services.
+# Values are resolved from the shell environment or the --env-file passed to
+# `docker compose`.  Secrets should never be hard-coded here.
+x-app-env: &app-env
+  OAUTH_ISSUER: ${OAUTH_ISSUER:-}
+  OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-}
+  OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
+  OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-http://localhost:8080/auth/callback}
+  PRIVATE_COOKIE_KEY: ${PRIVATE_COOKIE_KEY:-change-me-in-production}
+
+# ─── Shared PostgreSQL credentials ────────────────────────────────────────────
+x-pg-env: &pg-env
+  POSTGRES_USER: ${POSTGRES_USER:-oidc_user}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-oidc_pass}
+  POSTGRES_DB: ${POSTGRES_DB:-oidc_cache}
+
+services:
+
+  # ── PostgreSQL 18 ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:18-alpine
+    container_name: oidc-postgres
+
+    environment:
+      <<: *pg-env
+
+    # PostgreSQL runtime parameters
+    # ─────────────────────────────
+    # Global autovacuum is left ON (the default) so that all other tables
+    # continue to benefit from automatic maintenance.  The aggressive per-table
+    # settings applied by the init script ensure the cache table is vacuumed
+    # much more frequently than the global thresholds would trigger.
+    #
+    # Key parameters explained:
+    #   autovacuum_vacuum_scale_factor   – fraction of table size that must
+    #                                      have changed before a vacuum runs.
+    #                                      Default 0.20 (20 %); we use 0.01
+    #                                      (1 %) so vacuums fire early on a
+    #                                      high-churn cache table.
+    #   autovacuum_analyze_scale_factor  – same threshold but for ANALYZE.
+    #   autovacuum_vacuum_cost_delay     – throttle between vacuum I/O bursts
+    #                                      (ms). 2 ms ≈ full-speed vacuum.
+    #   autovacuum_naptime               – how often the autovacuum daemon
+    #                                      wakes up and checks all tables.
+    #                                      Default 1 min; 30 s is fine for
+    #                                      a dedicated cache database.
+    command: >
+      postgres
+        -c autovacuum=on
+        -c autovacuum_naptime=30s
+        -c autovacuum_vacuum_scale_factor=0.01
+        -c autovacuum_analyze_scale_factor=0.01
+        -c autovacuum_vacuum_cost_delay=2
+        -c log_autovacuum_min_duration=0
+        -c shared_buffers=256MB
+        -c work_mem=8MB
+        -c maintenance_work_mem=64MB
+        -c max_connections=100
+        -c wal_level=minimal
+        -c max_wal_senders=0
+        -c synchronous_commit=off
+
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    volumes:
+      # Persistent data volume so the cache survives container restarts.
+      - pg_data:/var/lib/postgresql/data
+      # Init scripts – executed once on first startup in lexicographic order.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          pg_isready -U ${POSTGRES_USER:-oidc_user} -d ${POSTGRES_DB:-oidc_cache}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    networks:
+      - oidc-net
+
+  # ── Nightly VACUUM cron ───────────────────────────────────────────────────────
+  #
+  # Why a separate service?
+  #   • PostgreSQL's built-in autovacuum handles *routine* dead-tuple reclaim,
+  #     but after a large expiry wave (e.g. midnight token expiry for thousands
+  #     of sessions) it can be overwhelmed.  A scheduled `VACUUM ANALYZE`
+  #     ensures the table stays compact and planner statistics stay accurate
+  #     regardless of autovacuum's backlog.
+  #   • Running the job inside a separate container keeps the postgres image
+  #     unchanged and avoids pg_cron extension installation complexity.
+  #   • The container uses `crond` from BusyBox (Alpine), consuming < 5 MB RAM
+  #     at idle.
+  pg-vacuum-cron:
+    build:
+      context: ./pg-vacuum-cron
+      dockerfile: Dockerfile
+    container_name: oidc-pg-vacuum-cron
+
+    environment:
+      <<: *pg-env
+      PGHOST: postgres
+      PGPORT: 5432
+      # Override cron schedule (default: every day at midnight UTC).
+      # Standard 5-field cron: minute hour dom month dow
+      VACUUM_SCHEDULE: ${VACUUM_SCHEDULE:-0 0 * * *}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    networks:
+      - oidc-net
+
+  # ── api-server ────────────────────────────────────────────────────────────────
+  #
+  # JWT-validated API server.  Validates Bearer tokens issued by the OIDC
+  # provider specified in OAUTH_ISSUER.  Not exposed to the host — reachable
+  # only from www-server via the internal oidc-net network.
+  api-server:
+    build:
+      # Build context must be the repository root so the workspace path
+      # `path = "../.."` in Cargo.toml resolves correctly.
+      context: ../..
+      dockerfile: examples/api-server/Dockerfile
+    image: axum-api-server:latest
+    container_name: oidc-api-server
+
+    environment:
+      <<: *app-env
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8181"
+
+    # No host-port mapping — the service is intentionally internal only.
+    expose:
+      - "8181"
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8181/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - oidc-net
+
+  # ── www-server ────────────────────────────────────────────────────────────────
+  #
+  # OAuth2 / OIDC front-end.  Uses PostgreSQL as the session-cache backend.
+  # Exposed on host port 8080 — the only service reachable from outside.
+  www-server:
+    build:
+      context: ../..
+      dockerfile: examples/www-server/Dockerfile
+      args:
+        # Build with Moka L1 + PostgreSQL L2 two-tier cache by default.
+        # Override: WWW_FEATURES=cache-pg docker compose up --build
+        FEATURES: ${WWW_FEATURES:-cache-l1-pg}
+    image: axum-www-server:postgres-latest
+    container_name: oidc-www-server
+
+    environment:
+      <<: *app-env
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8080"
+      # Point www-server's reverse proxy at the api-server service name.
+      API_SERVER: "http://api-server:8181"
+      # PostgreSQL session cache — uses the internal service name.
+      PG_URL: ${PG_URL:-postgresql://${POSTGRES_USER:-oidc_user}:${POSTGRES_PASSWORD:-oidc_pass}@postgres:5432/${POSTGRES_DB:-oidc_cache}}
+
+    ports:
+      - "${WWW_PORT:-8080}:8080"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api-server:
+        condition: service_started
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+    networks:
+      - oidc-net
+
+# ─── Named volumes ────────────────────────────────────────────────────────────
+volumes:
+  pg_data:
+    driver: local
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  oidc-net:
+    driver: bridge

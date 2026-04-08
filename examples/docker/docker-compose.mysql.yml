@@ -1,0 +1,283 @@
+# docker-compose.mysql.yml — MySQL 8 + nightly OPTIMIZE / ANALYZE cron + api-server + www-server
+#
+# Services
+# ────────
+#   mysql               – MySQL 8.0 with InnoDB tuned for a high-churn ephemeral
+#                         cache table (small rows, heavy INSERT/DELETE traffic).
+#   mysql-optimize-cron – A lightweight Alpine-based container that runs
+#                         `OPTIMIZE TABLE oidc_cache` and `ANALYZE TABLE oidc_cache`
+#                         every day at midnight (UTC by default).
+#   api-server          – JWT-validated API server (internal only, port 8181).
+#   www-server          – OAuth2 / OIDC front-end, exposed on host port 8080.
+#                         Uses MySQL as the session-cache backend
+#                         (cache-mysql or cache-l1-mysql).
+#
+#                   Why both?
+#                   • OPTIMIZE TABLE  – rebuilds the InnoDB tablespace to
+#                     reclaim fragmented free pages left after bulk DELETEs.
+#                     Unlike PostgreSQL's dead-tuple model, InnoDB's purge
+#                     thread reclaims row storage automatically, but page
+#                     fragmentation (holes in the B-tree) accumulates over
+#                     time and must be addressed with a full table rebuild.
+#                     OPTIMIZE TABLE is equivalent to ALTER TABLE … ENGINE=InnoDB
+#                     and therefore takes a brief metadata lock, so scheduling
+#                     it during off-peak hours is recommended.
+#                   • ANALYZE TABLE   – refreshes InnoDB index statistics so
+#                     the query optimiser keeps choosing the `expires_at` index
+#                     for cleanup and read queries after the row distribution
+#                     has shifted significantly.
+#
+# Quick start
+# ───────────
+#   cp .env.mysql.example .env.local
+#   # edit .env.local with real OAuth2 credentials
+#   docker compose -f ../docker/docker-compose.mysql.yml up -d
+#
+# Environment variables (override in .env.local or shell)
+# ────────────────────────────────────────────────────────
+#   MYSQL_USER            – application user name       (default: oidc_user)
+#   MYSQL_PASSWORD        – application user password   (default: oidc_pass)
+#   MYSQL_DATABASE        – database / schema name      (default: oidc_cache)
+#   MYSQL_ROOT_PASSWORD   – root password for init      (default: root_pass)
+#   MYSQL_PORT            – host-side port mapping      (default: 3306)
+#   OPTIMIZE_SCHEDULE     – cron expression             (default: 0 0 * * *)
+#                           Override to test more frequently: "*/5 * * * *"
+#
+# Application environment variables (set in shared .env.local / DOTENV_FILE)
+# ────────────────────────────────────────────────────────────────────────────
+#   OAUTH_ISSUER              – OIDC issuer URL (used by both servers)
+#   OAUTH_CLIENT_ID           – OAuth2 client ID (www-server)
+#   OAUTH_CLIENT_SECRET       – OAuth2 client secret (www-server)
+#   OAUTH_REDIRECT_URI        – callback URI (www-server)
+#   PRIVATE_COOKIE_KEY        – session encryption key (www-server)
+#   MYSQL_URL                 – MySQL connection URL
+#                               (default: mysql://oidc_user:oidc_pass@mysql:3306/oidc_cache)
+#   WWW_FEATURES              – cache feature compiled into www-server image
+#                               (default: cache-l1-mysql — Moka L1 + MySQL L2)
+
+name: axum-oidc-mysql
+
+# ─── Shared application environment ──────────────────────────────────────────
+# Common OIDC / OAuth2 variables read by both application services.
+# Values are resolved from the shell environment or the --env-file passed to
+# `docker compose`.  Secrets should never be hard-coded here.
+x-app-env: &app-env
+  OAUTH_ISSUER: ${OAUTH_ISSUER:-}
+  OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-}
+  OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
+  OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-http://localhost:8080/auth/callback}
+  PRIVATE_COOKIE_KEY: ${PRIVATE_COOKIE_KEY:-change-me-in-production}
+
+# ─── Shared MySQL credentials ─────────────────────────────────────────────────
+x-mysql-env: &mysql-env
+  MYSQL_USER: ${MYSQL_USER:-oidc_user}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:-oidc_pass}
+  MYSQL_DATABASE: ${MYSQL_DATABASE:-oidc_cache}
+
+services:
+
+  # ── MySQL 8.0 ─────────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: oidc-mysql
+
+    environment:
+      <<: *mysql-env
+      # Root password is required by the official MySQL image even when an
+      # application user is created via MYSQL_USER / MYSQL_PASSWORD.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_pass}
+
+    # InnoDB / MySQL runtime parameters
+    # ──────────────────────────────────
+    # Passed as --<option>=<value> flags on the mysqld command line.
+    # These override the compiled-in defaults without needing a my.cnf volume.
+    #
+    # Key parameters for a high-churn cache table:
+    #
+    #   innodb_buffer_pool_size        – the single most important InnoDB tuning
+    #                                    knob; all hot data and indexes are kept
+    #                                    here.  256 MB is generous for a cache-
+    #                                    only database in a local Docker stack.
+    #
+    #   innodb_flush_log_at_trx_commit – 1 = fully ACID (default); 2 = flush
+    #                                    to OS buffer each commit, sync once per
+    #                                    second.  For ephemeral cache data 2
+    #                                    gives a significant write-throughput
+    #                                    boost at the cost of up to 1 s of
+    #                                    transactions on a hard crash.
+    #
+    #   innodb_redo_log_capacity       – total redo log capacity in bytes.
+    #                                    128 MiB (134217728) reduces checkpoint
+    #                                    frequency for write-heavy workloads.
+    #                                    Replaces the deprecated innodb_log_file_size
+    #                                    / innodb_log_files_in_group pair (MySQL 8.0.30+).
+    #
+    #   innodb_purge_threads           – number of threads that process the
+    #                                    InnoDB purge (reclaiming undo log
+    #                                    space from deleted/updated rows).
+    #                                    4 threads handles bursts of mass-expiry
+    #                                    deletes efficiently.
+    #
+    #   innodb_max_purge_lag           – if the purge lag exceeds this many
+    #                                    transactions MySQL throttles DML to let
+    #                                    purge catch up (0 = unlimited; tune if
+    #                                    you observe DML throttling in the logs).
+    #
+    #   innodb_file_per_table          – each table gets its own .ibd file,
+    #                                    which is reclaimed to the OS when the
+    #                                    table is dropped or OPTIMIZE'd.
+    #                                    Required for OPTIMIZE TABLE to actually
+    #                                    shrink the on-disk footprint.
+    #
+    #   slow_query_log / long_query_time – log queries slower than 1 second.
+    #                                    log-output=TABLE writes to the
+    #                                    mysql.slow_log table instead of a file,
+    #                                    avoiding the /dev/stdout issue where
+    #                                    MySQL 8 cannot open that path inside Docker.
+    #
+    #   authentication-policy          – replaces the deprecated
+    #                                    default-authentication-plugin option
+    #                                    (removed in MySQL 8.4).
+    #
+    #   character-set-server / collation-server – utf8mb4 ensures cache keys
+    #                                    with arbitrary Unicode content are
+    #                                    stored correctly.
+    command: >
+      --innodb-buffer-pool-size=256M --innodb-flush-log-at-trx-commit=2 --innodb-redo-log-capacity=134217728 --innodb-purge-threads=4 --innodb-max-purge-lag=0 --innodb-file-per-table=ON --slow-query-log=ON --log-output=TABLE --long-query-time=1 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --authentication-policy=mysql_native_password --max-connections=200
+
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+
+    volumes:
+      # Persistent data volume.
+      - mysql_data:/var/lib/mysql
+      # Init SQL scripts – executed once on first container startup in
+      # lexicographic filename order by the official MySQL entrypoint.
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "--host=127.0.0.1", "--user=${MYSQL_USER:-oidc_user}", "--password=${MYSQL_PASSWORD:-oidc_pass}", "--silent" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+    networks:
+      - oidc-mysql-net
+
+  # ── Nightly OPTIMIZE + ANALYZE cron ──────────────────────────────────────────
+  #
+  # Why a separate container rather than a MySQL EVENT?
+  #   • The MySQL Event Scheduler requires the `event_scheduler=ON` GUC and
+  #     superuser privileges to create events, which couples maintenance logic
+  #     to the database schema.
+  #   • A sidecar container is self-contained, observable via `docker logs`,
+  #     and can be restarted or rescheduled independently of the database.
+  #   • OPTIMIZE TABLE acquires a metadata lock which can block DML for a
+  #     moment; running it from outside the database makes the window explicit.
+  mysql-optimize-cron:
+    build:
+      context: ./mysql-optimize-cron
+      dockerfile: Dockerfile
+    container_name: oidc-mysql-optimize-cron
+
+    environment:
+      <<: *mysql-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT_INNER: 3306
+      # 5-field cron expression: minute hour dom month dow
+      # Default: every day at midnight UTC
+      OPTIMIZE_SCHEDULE: ${OPTIMIZE_SCHEDULE:-0 0 * * *}
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+    networks:
+      - oidc-mysql-net
+
+  # ── api-server ────────────────────────────────────────────────────────────────
+  #
+  # JWT-validated API server.  Validates Bearer tokens issued by the OIDC
+  # provider specified in OAUTH_ISSUER.  Not exposed to the host — reachable
+  # only from www-server via the internal oidc-mysql-net network.
+  api-server:
+    build:
+      # Build context must be the repository root so the workspace path
+      # `path = "../.."` in Cargo.toml resolves correctly.
+      context: ../..
+      dockerfile: examples/api-server/Dockerfile
+    image: axum-api-server:latest
+    container_name: oidc-api-server
+
+    environment:
+      <<: *app-env
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8181"
+
+    # No host-port mapping — the service is intentionally internal only.
+    expose:
+      - "8181"
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8181/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - oidc-mysql-net
+
+  # ── www-server ────────────────────────────────────────────────────────────────
+  #
+  # OAuth2 / OIDC front-end.  Uses MySQL as the session-cache backend.
+  # Exposed on host port 8080 — the only service reachable from outside.
+  www-server:
+    build:
+      context: ../..
+      dockerfile: examples/www-server/Dockerfile
+      args:
+        # Build with Moka L1 + MySQL L2 two-tier cache by default.
+        # Override: WWW_FEATURES=cache-mysql docker compose up --build
+        FEATURES: ${WWW_FEATURES:-cache-l1-mysql}
+    image: axum-www-server:mysql-latest
+    container_name: oidc-www-server
+
+    environment:
+      <<: *app-env
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8080"
+      # Point www-server's reverse proxy at the api-server service name.
+      API_SERVER: "http://api-server:8181"
+      # MySQL session cache — uses the internal service name.
+      MYSQL_URL: ${MYSQL_URL:-mysql://${MYSQL_USER:-oidc_user}:${MYSQL_PASSWORD:-oidc_pass}@mysql:3306/${MYSQL_DATABASE:-oidc_cache}}
+
+    ports:
+      - "${WWW_PORT:-8080}:8080"
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+      api-server:
+        condition: service_started
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+    networks:
+      - oidc-mysql-net
+
+# ─── Named volumes ────────────────────────────────────────────────────────────
+volumes:
+  mysql_data:
+    driver: local
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  oidc-mysql-net:
+    driver: bridge

@@ -1,0 +1,159 @@
+# docker-compose.l1.yml — Moka in-process cache (L1 only) + api-server + www-server
+#
+# Services
+# ────────
+#   api-server – JWT-validated API server (internal only, port 8181).
+#   www-server – OAuth2 / OIDC front-end, exposed on host port 8080.
+#                Uses Moka in-process cache (cache-l1) — no external backend
+#                required.  Session state is held in the www-server process
+#                and does not survive a container restart.
+#
+# This is the simplest possible deployment: only two containers, no database,
+# no Redis, no volume mounts.  Ideal for:
+#   • Local development and quick demos
+#   • Single-instance deployments where session durability is not required
+#   • CI pipelines that need a running stack without external services
+#
+# Quick start
+# ───────────
+#   # From the examples/ directory:
+#   docker compose -f docker/docker-compose.l1.yml up -d
+#
+#   # Or from the docker/ directory:
+#   docker compose -f docker-compose.l1.yml up -d
+#
+#   # Tail logs:
+#   docker compose -f docker/docker-compose.l1.yml logs -f
+#
+#   # Stop and remove containers:
+#   docker compose -f docker/docker-compose.l1.yml down
+#
+# Environment variables (set in shared examples/.env.local or via shell)
+# ───────────────────────────────────────────────────────────────────────
+#   OAUTH_ISSUER          – OIDC issuer URL for autodiscovery   (recommended)
+#                           Used by both www-server (token flow) and
+#                           api-server (JWT validation).
+#   OAUTH_CLIENT_ID       – OAuth2 client ID                    (required)
+#   OAUTH_CLIENT_SECRET   – OAuth2 client secret                (required)
+#   OAUTH_REDIRECT_URI    – callback URI
+#                           (default: http://localhost:8080/auth/callback)
+#   PRIVATE_COOKIE_KEY    – session encryption key              (change in prod!)
+#                           Generate with: openssl rand -base64 64
+#   CUSTOM_CA_CERT        – path to PEM CA cert for private OIDC providers
+#                           (optional)
+#
+# Moka L1 tuning (optional — defaults are sensible for local use)
+# ───────────────────────────────────────────────────────────────
+#   L1_MAX_CAPACITY       – max number of session entries (default: 10000)
+#   L1_TTL_SEC            – entry time-to-live in seconds (default: 3600)
+#   L1_TIME_TO_IDLE_SEC   – idle-eviction timeout in seconds (optional)
+#
+# Server bind overrides
+# ─────────────────────
+#   WWW_PORT              – host-side port for www-server (default: 8080)
+#
+# Notes
+# ─────
+#   • Sessions are lost when www-server restarts because Moka is in-process.
+#     For persistent sessions across restarts use one of the L2 compose files
+#     (docker-compose.postgres.yml, docker-compose.redis.yml, etc.).
+#   • api-server has no host-port binding — it is reachable only from
+#     www-server on the internal oidc-l1-net bridge network.
+
+name: axum-oidc-l1
+
+# ─── Shared application environment ──────────────────────────────────────────
+# Common OIDC / OAuth2 variables read by both application services.
+# Values are resolved from the shell environment or the --env-file passed to
+# `docker compose`.  Secrets should never be hard-coded here.
+x-app-env: &app-env
+  OAUTH_ISSUER: ${OAUTH_ISSUER:-}
+  OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-}
+  OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
+  OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-http://localhost:8080/auth/callback}
+  PRIVATE_COOKIE_KEY: ${PRIVATE_COOKIE_KEY:-change-me-in-production}
+
+services:
+
+  # ── api-server ────────────────────────────────────────────────────────────────
+  #
+  # JWT-validated API server.  Validates Bearer tokens issued by the OIDC
+  # provider specified in OAUTH_ISSUER.  Not exposed to the host — reachable
+  # only from www-server via the internal oidc-l1-net bridge network.
+  api-server:
+    build:
+      # Build context must be the repository root so the workspace path
+      # `path = "../.."` in Cargo.toml resolves correctly.
+      context: ../..
+      dockerfile: examples/api-server/Dockerfile
+    image: axum-api-server:latest
+    container_name: oidc-api-server
+
+    environment:
+      <<: *app-env
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8181"
+
+    # No host-port mapping — the service is intentionally internal only.
+    expose:
+      - "8181"
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8181/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - oidc-l1-net
+
+  # ── www-server ────────────────────────────────────────────────────────────────
+  #
+  # OAuth2 / OIDC front-end built with the Moka in-process cache (cache-l1).
+  # No external cache backend is required — sessions are held entirely in the
+  # www-server process memory.
+  #
+  # Exposed on host port 8080 — the only service reachable from outside.
+  www-server:
+    build:
+      context: ../..
+      dockerfile: examples/www-server/Dockerfile
+      args:
+        FEATURES: cache-l1
+    image: axum-www-server:l1-latest
+    container_name: oidc-www-server
+
+    environment:
+      <<: *app-env
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8080"
+      # Point www-server's reverse proxy at the api-server service name.
+      API_SERVER: "http://api-server:8181"
+      # Moka L1 tuning — override via shell env or .env.local.
+      L1_MAX_CAPACITY: ${L1_MAX_CAPACITY:-10000}
+      L1_TTL_SEC: ${L1_TTL_SEC:-3600}
+
+    ports:
+      - "${WWW_PORT:-8080}:8080"
+
+    depends_on:
+      api-server:
+        condition: service_started
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+    networks:
+      - oidc-l1-net
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+# A single internal bridge network connects api-server and www-server.
+# No external services join this network.
+networks:
+  oidc-l1-net:
+    driver: bridge

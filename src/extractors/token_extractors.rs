@@ -10,8 +10,7 @@ use std::{ops::Deref, sync::Arc};
 
 use super::shared::extract_and_refresh_session;
 use crate::{
-    auth::{OAuthConfiguration, SESSION_KEY},
-    auth_cache::AuthCache,
+    authentication::{cache::AuthCache, OAuthConfiguration, SESSION_KEY},
     errors::Error,
 };
 

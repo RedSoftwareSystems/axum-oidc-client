@@ -114,42 +114,85 @@
 //!
 //! ## Feature Flags
 //!
-//! - `redis`: Enable Redis cache backend (default TLS)
-//! - `redis-rustls`: Enable Redis with rustls for TLS
-//! - `redis-native-tls`: Enable Redis with native-tls
-//! - `moka-cache`: Enable the two-tier in-memory L1 cache (Moka) wrapping any [`auth_cache::AuthCache`] L2 backend
-//! - `sql-cache-postgres`: Enable PostgreSQL cache backend via sqlx
-//! - `sql-cache-mysql`: Enable MySQL/MariaDB cache backend via sqlx
-//! - `sql-cache-sqlite`: Enable SQLite cache backend via sqlx
-//! - `sql-cache-all`: Enable all three SQL backends at once (useful for testing)
+//! ### Top-level (default)
+//!
+//! - `authentication` *(default)* – OAuth2/OIDC middleware, session management, cache trait,
+//!   builder, router, extractors, and logout handlers.  Implied by every cache/backend feature.
+//! - `jwt` *(default)* – JWT validation and inspection utilities.
+//!
+//! ### Cache backends (each implies `authentication`)
+//!
+//! - `moka-cache` *(default)* – two-tier in-process Moka L1 cache
+//! - `redis` – Redis cache backend (rustls TLS)
+//! - `redis-rustls` – Redis with explicit rustls TLS
+//! - `redis-native-tls` – Redis with native-tls
+//! - `sql-cache-postgres` – PostgreSQL backend via sqlx
+//! - `sql-cache-mysql` – MySQL/MariaDB backend via sqlx
+//! - `sql-cache-sqlite` – SQLite backend via sqlx
+//! - `sql-cache-all` – all three SQL backends at once (useful for testing)
 //!
 //! ## Examples
 //!
-//! See the `examples/sample-server` directory for a complete working example.
+//! See the `examples` directory for a complete working examples.
 
-pub mod auth;
-pub mod auth_builder;
-pub mod auth_cache;
-mod auth_router;
-pub mod auth_session;
 pub mod errors;
-pub mod extractors;
 pub mod http_client;
-pub mod logout;
+
+// ── authentication feature ────────────────────────────────────────────────────
+
+#[cfg(feature = "authentication")]
+pub mod authentication;
+
+#[cfg(feature = "authentication")]
+pub mod extractors;
+
+// ── Backward-compatible module aliases (authentication feature) ───────────────
+// Code written against the old flat module layout continues to compile without
+// modification.
+
+/// Backward-compatible alias for [`authentication::builder`].
+#[cfg(feature = "authentication")]
+pub use authentication::builder as auth_builder;
+
+/// Backward-compatible alias for [`authentication::cache`].
+#[cfg(feature = "authentication")]
+pub use authentication::cache as auth_cache;
+
+/// Backward-compatible alias for [`authentication::session`].
+#[cfg(feature = "authentication")]
+pub use authentication::session as auth_session;
+
+/// Backward-compatible alias for [`authentication::logout`].
+#[cfg(feature = "authentication")]
+pub use authentication::logout;
+
+/// Backward-compatible alias for the [`authentication`] module.
+/// `auth::AuthenticationLayer`, `auth::AuthLayer`, `auth::CodeChallengeMethod`, etc.
+/// all resolve correctly through this alias.
+#[cfg(feature = "authentication")]
+pub use authentication as auth;
 
 #[cfg(any(
     feature = "redis",
     feature = "redis-rustls",
     feature = "redis-native-tls"
 ))]
-pub mod redis;
+/// Backward-compatible alias for [`authentication::redis`].
+pub use authentication::redis;
 
 #[cfg(feature = "moka-cache")]
-pub mod cache;
+/// Backward-compatible alias for [`authentication::moka`].
+pub use authentication::moka as cache;
 
 #[cfg(any(
     feature = "sql-cache-postgres",
     feature = "sql-cache-mysql",
     feature = "sql-cache-sqlite",
 ))]
-pub mod sql_cache;
+/// Backward-compatible alias for [`authentication::sql_cache`].
+pub use authentication::sql_cache;
+
+// ── jwt feature ───────────────────────────────────────────────────────────────
+
+#[cfg(feature = "jwt")]
+pub mod jwt;

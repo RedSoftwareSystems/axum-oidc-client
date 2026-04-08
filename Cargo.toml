@@ -1,7 +1,7 @@
 [package]
 name = "axum-oidc-client"
-version = "0.3.0"
-edition = "2021"
+version = "0.4.0"
+edition = "2024"
 license = "MIT"
 description = "OpenID Connect (OIDC) and OAuth2 client middleware for Axum web framework"
 documentation = "https://docs.rs/axum-oidc-client"
@@ -39,22 +39,43 @@ tracing = { version = "0.1" }
 # The runtime is always tokio; the database driver is selected per feature.
 sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "chrono"] }
 
+# jsonwebtoken and base64 are pulled in only when the `jwt` feature is enabled.
+jsonwebtoken = { version = "10.3", optional = true, features = ["rust_crypto"] }
+base64 = { version = "0.22", optional = true }
+
 [dev-dependencies]
 mockito = "1"
 tempfile = "3"
 
 [features]
-default = ["moka-cache"]
-moka-cache = ["dep:moka"]
-redis = ["dep:redis"]
-redis-native-tls= ["redis", "redis?/tokio-native-tls-comp"] #"tokio-native-tls-comp"
-redis-rustls = ["redis", "redis?/tokio-rustls-comp"] #"tokio-rustls-comp"
+# ── Top-level features ────────────────────────────────────────────────────────
+# `authentication` – the full OAuth2/OIDC authentication stack: middleware,
+#   session management, cache trait, builder, router, extractors, and logout
+#   handlers.  Enabled by default and implied by every cache/backend feature.
+#
+# `jwt` – JWT validation and inspection utilities.  Enabled by default.
+#
+# Both are in `default` so a plain `[dependencies] axum-oidc-client = "…"`
+# gives users the complete feature set without any extra configuration.
+default = ["authentication", "jwt", "moka-cache"]
 
-# SQL cache backends – enable exactly one for production use.
+authentication = []
+jwt = ["dep:jsonwebtoken", "dep:base64"]
+
+# ── Moka in-process L1 cache ──────────────────────────────────────────────────
+moka-cache = ["authentication", "dep:moka"]
+
+# ── Redis cache backend ───────────────────────────────────────────────────────
+redis = ["authentication", "dep:redis"]
+redis-native-tls = ["authentication", "redis", "redis?/tokio-native-tls-comp"]
+redis-rustls     = ["authentication", "redis", "redis?/tokio-rustls-comp"]
+
+# ── SQL cache backends ────────────────────────────────────────────────────────
+# Enable exactly one for production use.
 # Multiple can be enabled simultaneously for testing purposes.
-sql-cache-postgres = ["dep:sqlx", "sqlx?/postgres"]
-sql-cache-mysql    = ["dep:sqlx", "sqlx?/mysql"]
-sql-cache-sqlite   = ["dep:sqlx", "sqlx?/sqlite"]
+sql-cache-postgres = ["authentication", "dep:sqlx", "sqlx?/postgres"]
+sql-cache-mysql    = ["authentication", "dep:sqlx", "sqlx?/mysql"]
+sql-cache-sqlite   = ["authentication", "dep:sqlx", "sqlx?/sqlite"]
 
 # Convenience feature that enables all three SQL backends at once (for tests).
 sql-cache-all = ["sql-cache-postgres", "sql-cache-mysql", "sql-cache-sqlite"]

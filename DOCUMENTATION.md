@@ -1,4 +1,4 @@
-# axum-oidc-client API Documentation (v0.3.0)
+# axum-oidc-client API Documentation (v0.4.0)
 
 Complete API documentation and usage guide for the axum-oidc-client library.
 
@@ -22,6 +22,29 @@ Complete API documentation and usage guide for the axum-oidc-client library.
 - Encrypted session management
 - Type-safe extractors with automatic ID token and access token refresh
 - Flexible logout handlers
+- Standalone JWT validation via `JwtLayer`, independent of the full OAuth2 session stack
+
+## Feature Flags
+
+### Top-level (default)
+
+| Flag | Default | Description |
+|---|---|---|
+| `authentication` | ✅ | Full OAuth2/OIDC stack (session management, cache, extractors, logout). Implied by every cache feature. |
+| `jwt` | ✅ | JWT validation via `JwtLayer`, `OidcClaims`, `JwtConfiguration`, `JwtConfigurationBuilder`. |
+
+### Cache backends (each implies `authentication`)
+
+| Flag | Default | Description |
+|---|---|---|
+| `moka-cache` | ✅ | Two-tier in-process Moka L1 cache (`TwoTierAuthCache`). |
+| `redis` | ❌ | Redis L2 backend (plain TCP). |
+| `redis-rustls` | ❌ | Redis L2 backend with rustls TLS. |
+| `redis-native-tls` | ❌ | Redis L2 backend with native-tls TLS. |
+| `sql-cache-postgres` | ❌ | PostgreSQL SQL cache backend. |
+| `sql-cache-mysql` | ❌ | MySQL/MariaDB SQL cache backend. |
+| `sql-cache-sqlite` | ❌ | SQLite SQL cache backend. |
+| `sql-cache-all` | ❌ | All three SQL cache backends. |
 
 ## Core Concepts
 
@@ -58,6 +81,20 @@ PKCE enhances OAuth2 security by:
 - Provider validates verifier matches challenge
 
 ## API Reference
+
+> **Module restructuring note (v0.4.0):** All authentication-related modules are now organised
+> under `authentication/` with backward-compatible re-exports at their original paths. No existing
+> code needs to change.
+>
+> | Old path | New canonical path | Still works? |
+> |---|---|---|
+> | `auth::AuthenticationLayer` | `authentication::AuthenticationLayer` | ✅ via alias |
+> | `auth_builder::OAuthConfigurationBuilder` | `authentication::builder::OAuthConfigurationBuilder` | ✅ via alias |
+> | `auth_cache::AuthCache` | `authentication::cache::AuthCache` | ✅ via alias |
+> | `auth_session::AuthSession` | `authentication::session::AuthSession` | ✅ via alias |
+> | `cache::TwoTierAuthCache` | `authentication::moka::TwoTierAuthCache` | ✅ via alias |
+> | `sql_cache::SqlAuthCache` | `authentication::sql_cache::SqlAuthCache` | ✅ via alias |
+> | `logout::*` | `authentication::logout::*` | ✅ via alias |
 
 ### Module: `sql_cache`
 
@@ -311,6 +348,7 @@ pub struct AuthenticationLayer {
 }
 
 /// Backward-compatible type alias — existing code using `AuthLayer` continues to compile.
+/// `AuthLayer` and `AuthenticationLayer` are identical; use whichever you prefer.
 pub type AuthLayer = AuthenticationLayer;
 
 impl AuthenticationLayer {
@@ -399,11 +437,12 @@ Fluent API for building configurations.
 
 | Method                               | Required | Description                                        |
 | ------------------------------------ | -------- | -------------------------------------------------- |
+| `with_issuer(url).await?`            | No*      | OIDC auto-discovery: populates `authorization_endpoint`, `token_endpoint`, and `end_session_endpoint` from the provider's discovery document |
 | `with_client_id(id)`                 | Yes      | Set OAuth2 client ID                               |
 | `with_client_secret(secret)`         | Yes      | Set OAuth2 client secret                           |
 | `with_redirect_uri(uri)`             | Yes      | Set callback URI                                   |
-| `with_authorization_endpoint(url)`   | Yes      | Set auth endpoint                                  |
-| `with_token_endpoint(url)`           | Yes      | Set token endpoint                                 |
+| `with_authorization_endpoint(url)`   | Yes*     | Set auth endpoint (not required when using `with_issuer`) |
+| `with_token_endpoint(url)`           | Yes*     | Set token endpoint (not required when using `with_issuer`) |
 | `with_private_cookie_key(key)`       | Yes      | Set session encryption key                         |
 | `with_session_max_age(minutes)`      | Yes      | Set session duration                               |
 | `with_scopes(scopes)`                | No       | Set OAuth scopes (default: openid, email, profile) |
@@ -414,7 +453,28 @@ Fluent API for building configurations.
 | `with_token_max_age(seconds)`        | No       | Set token max age                                  |
 | `build()`                            | -        | Build the configuration                            |
 
-**Example:**
+> *When `with_issuer` is used, `with_authorization_endpoint` and `with_token_endpoint` are not
+> required because the endpoints are populated automatically from the provider's OIDC discovery
+> document. You may still call them explicitly to override individual values if needed.
+
+**OIDC Auto-Discovery Example:**
+
+Use `with_issuer` to automatically populate `authorization_endpoint`, `token_endpoint`, and
+`end_session_endpoint` from the provider's `/.well-known/openid-configuration` document:
+
+```rust
+// Auto-populate authorization_endpoint, token_endpoint, end_session_endpoint
+let config = OAuthConfigurationBuilder::default()
+    .with_issuer("https://accounts.google.com").await?
+    .with_client_id("your-client-id")
+    .with_client_secret("your-client-secret")
+    .with_redirect_uri("http://localhost:8080/auth/callback")
+    .with_private_cookie_key(&env::var("COOKIE_KEY")?)
+    .with_session_max_age(30)
+    .build()?;
+```
+
+**Manual Endpoint Example:**
 
 ```rust
 let config = OAuthConfigurationBuilder::default()
@@ -560,7 +620,12 @@ async fn protected(session: AuthSession) -> String {
 
 Type-safe extractors for route handlers with automatic ID token and access token refresh support.
 
-All extractors automatically check token expiration and refresh ID tokens and access tokens when needed, providing seamless token management without manual intervention.
+All OAuth2/OIDC session extractors automatically check token expiration and refresh ID tokens and
+access tokens when needed, providing seamless token management without manual intervention.
+
+For stateless JWT validation (without a full OAuth2 session), see the
+[`JwtClaims<C>`](#jwtclaimsc) and [`OptionalJwtClaims<C>`](#optionaljwtclaimsc) extractors below,
+which are populated by [`JwtLayer`](#jwtlayerc).
 
 #### `AuthSession`
 
@@ -626,6 +691,215 @@ async fn public_route(OptionalIdToken(token): OptionalIdToken) -> String {
         Some(id_token) => format!("Welcome back!"),
         None => format!("Please log in"),
     }
+}
+```
+
+#### `JwtClaims<C>`
+
+Extracts decoded JWT claims that were injected into the request extensions by [`JwtLayer<C>`](#jwtlayerc). Returns `401 Unauthorized` when the extension is absent (i.e. no valid Bearer token was presented, or `JwtLayer` was not applied to the route).
+
+Requires the `jwt` feature flag (**enabled by default**).
+
+```rust
+use axum_oidc_client::extractors::JwtClaims;
+use axum_oidc_client::jwt::OidcClaims;
+
+async fn handler(JwtClaims(claims): JwtClaims<OidcClaims>) -> String {
+    format!("sub: {}", claims.sub)
+}
+```
+
+#### `OptionalJwtClaims<C>`
+
+Same as `JwtClaims<C>` but returns `None` instead of rejecting the request when no valid token is
+present. Suitable for public routes that show enriched content to authenticated callers.
+
+Requires the `jwt` feature flag (**enabled by default**).
+
+```rust
+use axum_oidc_client::extractors::OptionalJwtClaims;
+use axum_oidc_client::jwt::OidcClaims;
+
+async fn handler(OptionalJwtClaims(claims): OptionalJwtClaims<OidcClaims>) -> String {
+    match claims {
+        Some(c) => format!("Hello, {}!", c.sub),
+        None    => "Hello, anonymous!".to_string(),
+    }
+}
+```
+
+### Module: `jwt`
+
+Standalone JWT validation layer, independent of the full OAuth2/OIDC session stack. Requires the
+`jwt` feature flag (**enabled by default**).
+
+All types in `jwt::oidc` are re-exported directly from `jwt` for convenience (e.g.
+`axum_oidc_client::jwt::OidcClaims`).
+
+#### `JwtConfiguration<C>`
+
+```rust
+pub struct JwtConfiguration<C: DeserializeOwned> { /* opaque */ }
+```
+
+Holds the decoding key, validation settings (algorithm, audience, expiry), and an optional JWKS
+fetched from a remote endpoint. Built exclusively via [`JwtConfigurationBuilder<C>`](#jwtconfigurationbuilderc).
+
+#### `JwtConfigurationBuilder<C>`
+
+Fluent builder for `JwtConfiguration<C>`. The default builder targets RS256 with `exp` validation
+enabled.
+
+**Methods:**
+
+| Method | Description |
+|---|---|
+| `new()` | Default builder (RS256, `exp` validation enabled). |
+| `with_custom_ca_cert(path)` | Trust a custom CA certificate for HTTPS requests (e.g. self-signed IdP). |
+| `with_decoding_key(key)` | Provide the decoding key directly (`DecodingKey` from `jsonwebtoken`). Use for HS256 shared secrets or an explicit RSA/EC PEM. |
+| `with_issuer(url).await?` | Perform OIDC discovery against `url/.well-known/openid-configuration`, then fetch the advertised JWKS. Populates the key set automatically. |
+| `with_jwks_uri(url).await?` | Fetch a JWKS directly from `url` without OIDC discovery. |
+| `with_audience(vec![...])` | Set one or more expected audience values (`aud` claim). |
+| `with_algorithm(alg)` | Override the signature algorithm (default: `Algorithm::RS256`). |
+| `with_exp_validation(bool)` | Enable or disable `exp` claim validation (default: `true`). |
+| `build()` | Consume the builder and return `Result<JwtConfiguration<C>, Error>`. |
+
+**Examples:**
+
+```rust
+use axum_oidc_client::jwt::{JwtConfigurationBuilder, OidcClaims};
+
+// OIDC auto-discovery (most common for production)
+let config = JwtConfigurationBuilder::<OidcClaims>::new()
+    .with_issuer("https://accounts.google.com").await?
+    .with_audience(vec!["my-client-id".to_string()])
+    .build()?;
+
+// Direct JWKS URI
+let config = JwtConfigurationBuilder::<OidcClaims>::new()
+    .with_jwks_uri("https://provider.example.com/.well-known/jwks.json").await?
+    .with_audience(vec!["my-client-id".to_string()])
+    .build()?;
+
+// Shared secret (HS256)
+use jsonwebtoken::{DecodingKey, Algorithm};
+
+let config = JwtConfigurationBuilder::<OidcClaims>::new()
+    .with_decoding_key(DecodingKey::from_secret(b"secret"))
+    .with_algorithm(Algorithm::HS256)
+    .build()?;
+```
+
+#### `JwtLayer<C>`
+
+Tower middleware layer that validates incoming JWTs and makes their decoded claims available to
+downstream handlers via request extensions.
+
+**Behaviour:**
+
+1. Extracts the `Authorization: Bearer <token>` header from the incoming request.
+2. Decodes and validates the token against the `JwtConfiguration<C>` provided at construction.
+3. On success, inserts the decoded claims as a request extension (type `C`).
+4. On failure (missing header, invalid token, expired token, bad signature, etc.) the layer
+   silently continues without inserting the extension — it does **not** short-circuit the request.
+
+Handlers access the claims via the [`JwtClaims<C>`](#jwtclaimsc) extractor (returns 401 if absent)
+or [`OptionalJwtClaims<C>`](#optionaljwtclaimsc) (returns `None` if absent).
+
+```rust
+use axum::{Router, routing::get};
+use axum_oidc_client::jwt::{JwtLayer, JwtConfigurationBuilder, OidcClaims};
+use std::sync::Arc;
+
+let config = JwtConfigurationBuilder::<OidcClaims>::new()
+    .with_issuer("https://accounts.google.com").await?
+    .with_audience(vec!["my-client-id".to_string()])
+    .build()?;
+
+let app = Router::new()
+    .route("/protected", get(handler))
+    .layer(JwtLayer::new(Arc::new(config)));
+```
+
+#### `OidcClaims`
+
+Standard OIDC/JWT claims struct. Re-exported as `axum_oidc_client::jwt::OidcClaims`; the
+canonical definition lives in `jwt::oidc`.
+
+**Fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `sub` | `String` | Subject identifier |
+| `iss` | `Option<String>` | Issuer |
+| `aud` | `Option<Value>` | Audience (string or array) |
+| `exp` | `Option<i64>` | Expiration time (Unix timestamp) |
+| `iat` | `Option<i64>` | Issued-at time (Unix timestamp) |
+| `nbf` | `Option<i64>` | Not-before time (Unix timestamp) |
+| `jti` | `Option<String>` | JWT ID |
+| `nonce` | `Option<String>` | Nonce (used in OIDC implicit/hybrid flows) |
+| `email` | `Option<String>` | User's email address |
+| `email_verified` | `Option<bool>` | Whether the email has been verified |
+| `name` | `Option<String>` | Full display name |
+| `given_name` | `Option<String>` | Given (first) name |
+| `family_name` | `Option<String>` | Family (last) name |
+| `picture` | `Option<String>` | Profile picture URL |
+| `locale` | `Option<String>` | BCP 47 locale tag |
+| `zoneinfo` | `Option<String>` | IANA time zone |
+| `extra` | `HashMap<String, Value>` | Any additional provider-specific claims |
+
+#### `Jwk` / `Jwks`
+
+Public types representing JSON Web Keys fetched from a JWKS endpoint.
+
+- `Jwks` is the top-level container returned by a JWKS endpoint (`{ "keys": [...] }`).
+- `Jwk` represents a single key entry.
+- `Jwks::decoding_key_for_kid(kid)` returns the `DecodingKey` for the entry whose `kid` field
+  matches the supplied key ID. Use this when rotating keys: decode the token header with
+  `decode_jwt_unverified` to read `kid`, then select the correct key before full verification.
+
+#### Free functions
+
+```rust
+use axum_oidc_client::jwt::{decode_jwt, decode_jwt_unverified, OidcClaims};
+use jsonwebtoken::{DecodingKey, Validation};
+```
+
+**`decode_jwt`**
+
+```rust
+pub fn decode_jwt(
+    token: &str,
+    key: &DecodingKey,
+    validation: &Validation,
+) -> Result<TokenData<OidcClaims>, Error>
+```
+
+Fully decode and cryptographically verify a JWT. Returns the parsed `Header` and `OidcClaims`
+wrapped in `TokenData`, or an `Error` if validation fails.
+
+**`decode_jwt_unverified`**
+
+```rust
+pub fn decode_jwt_unverified(
+    token: &str,
+) -> Result<(Header, OidcClaims), Error>
+```
+
+Decode the JWT header and payload **without verifying the signature**. Use this solely to read
+metadata (e.g. `kid`, `alg`) before selecting the correct key for full verification. Never use
+the returned claims for authorisation decisions.
+
+**Typical key-rotation pattern:**
+
+```rust
+use axum_oidc_client::jwt::{decode_jwt_unverified, OidcClaims};
+
+let (header, _unverified) = decode_jwt_unverified(token)?;
+if let Some(kid) = &header.kid {
+    let key = jwks.decoding_key_for_kid(kid)?;
+    let verified = decode_jwt(token, &key, &validation)?;
+    // use verified.claims safely
 }
 ```
 
@@ -1286,7 +1560,7 @@ let logout_handler = Arc::new(OidcLogoutHandler::new(
 
 ## Automatic Routes
 
-The `AuthenticationLayer` adds these routes automatically (also accessible via the `AuthLayer` alias):
+The `AuthenticationLayer` (also accessible via the `AuthLayer` alias) adds these routes automatically:
 
 | Route                         | Method | Description                                       |
 | ----------------------------- | ------ | ------------------------------------------------- |
@@ -1343,6 +1617,16 @@ The `AuthenticationLayer` adds these routes automatically (also accessible via t
 > let scope = session.scope.as_deref().unwrap_or("(none)");
 > ```
 
+**Issue: `JwtClaims` extractor returns 401 even though a token is sent**
+
+> **Solution:**
+> 1. Confirm `JwtLayer` is applied to the router or route in question — the layer must sit between
+>    the client and the handler for the extension to be populated.
+> 2. Check that the token is not expired, the audience matches `with_audience(...)`, and the
+>    signing algorithm matches `with_algorithm(...)`.
+> 3. Use `decode_jwt_unverified` to inspect the token header/claims without performing signature
+>    verification, which helps identify mismatches before involving the full validation stack.
+
 ## Additional Resources
 
 - [RFC 6749 - OAuth 2.0](https://tools.ietf.org/html/rfc6749)
@@ -1352,5 +1636,5 @@ The `AuthenticationLayer` adds these routes automatically (also accessible via t
 
 ---
 
-**Last Updated:** 2026-03-04
-**Version:** 0.3.0
+**Last Updated:** 2026-03-25
+**Version:** 0.4.0

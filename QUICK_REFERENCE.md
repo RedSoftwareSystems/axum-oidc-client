@@ -6,7 +6,7 @@ A quick reference guide for common tasks and API usage.
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.3.0"
+axum-oidc-client = "0.4.0"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -54,6 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/", get(home))
         .route("/protected", get(protected))
         .layer(AuthenticationLayer::new(Arc::new(config), cache, logout_handler));
+        // AuthLayer is a backward-compatible alias for AuthenticationLayer
 
     // 5. Start server
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
@@ -74,30 +75,104 @@ async fn protected(session: AuthSession) -> String {
 ## Common Imports
 
 ```rust
-// Core
+// ── Authentication (OAuth2/OIDC) ──────────────────────────────────────────────
 use axum_oidc_client::auth::{AuthenticationLayer, CodeChallengeMethod, OAuthConfiguration};
-// AuthLayer is kept as a backward-compatible type alias for AuthenticationLayer
+// AuthLayer is a backward-compatible alias: use axum_oidc_client::auth::AuthLayer;
 use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
 use axum_oidc_client::auth_cache::AuthCache;
-
-// Session & Extractors (all support auto-refresh)
 use axum_oidc_client::auth_session::AuthSession;
 use axum_oidc_client::extractors::{
-    AccessToken, IdToken, OptionalAccessToken, OptionalIdToken
+    AccessToken, IdToken, OptionalAccessToken, OptionalIdToken,
+    // JWT extractors (require JwtLayer to be applied):
+    JwtClaims, OptionalJwtClaims,
+};
+use axum_oidc_client::logout::handle_default_logout::DefaultLogoutHandler;
+use axum_oidc_client::errors::Error;
+
+// ── JWT validation (standalone Bearer token validation) ───────────────────────
+use axum_oidc_client::jwt::{
+    JwtLayer, JwtConfiguration, JwtConfigurationBuilder,
+    OidcClaims, Algorithm, DecodingKey, Validation, decode_jwt,
 };
 
-// Logout
-use axum_oidc_client::logout::handle_default_logout::DefaultLogoutHandler;
-use axum_oidc_client::logout::handle_oidc_logout::OidcLogoutHandler;
+// ── Cache backends ─────────────────────────────────────────────────────────────
+use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};  // moka-cache
+// use axum_oidc_client::redis;                                                // redis feature
+// use axum_oidc_client::sql_cache::{SqlAuthCache, SqlCacheConfig};            // sql-cache-* feature
+```
 
-// Cache (moka-cache feature, enabled by default)
-use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
+## JWT Bearer Token Validation
 
-// Cache (redis feature, optional)
-use axum_oidc_client::redis::AuthCache as RedisCache;
+Use `JwtLayer` to validate `Authorization: Bearer <token>` headers independently of
+the OAuth2 session flow. The layer injects decoded claims as a request extension;
+handlers extract them with `JwtClaims<C>` or `OptionalJwtClaims<C>`.
 
-// Errors
-use axum_oidc_client::errors::Error;
+### Quick setup
+
+```rust
+use axum_oidc_client::jwt::{JwtLayer, JwtConfigurationBuilder, Algorithm, DecodingKey, OidcClaims};
+use axum_oidc_client::extractors::{JwtClaims, OptionalJwtClaims};
+
+// HS256 shared secret
+let config = JwtConfigurationBuilder::<OidcClaims>::new()
+    .with_decoding_key(DecodingKey::from_secret(b"my-secret"))
+    .with_algorithm(Algorithm::HS256)
+    .with_audience(vec!["my-client-id".to_string()])
+    .build()?;
+
+// RS256 via OIDC auto-discovery (fetches JWKS automatically)
+let config = JwtConfigurationBuilder::<OidcClaims>::new()
+    .with_issuer("https://accounts.google.com").await?
+    .with_audience(vec!["my-client-id".to_string()])
+    .build()?;
+
+// Direct JWKS URI
+let config = JwtConfigurationBuilder::<OidcClaims>::new()
+    .with_jwks_uri("https://example.com/.well-known/jwks.json").await?
+    .build()?;
+
+let app = Router::new()
+    .route("/protected", get(protected_handler))
+    .route("/public",    get(public_handler))
+    .layer(JwtLayer::new(Arc::new(config)));
+```
+
+### Extractors
+
+| Extractor | Behaviour when token absent/invalid |
+|-----------|--------------------------------------|
+| `JwtClaims<C>` | Returns `401 Unauthorized` |
+| `OptionalJwtClaims<C>` | Returns `None`; never rejects |
+
+```rust
+// Required authentication
+async fn protected_handler(JwtClaims(claims): JwtClaims<OidcClaims>) -> String {
+    format!("Hello, {}!", claims.sub)
+}
+
+// Optional authentication
+async fn public_handler(OptionalJwtClaims(claims): OptionalJwtClaims<OidcClaims>) -> String {
+    match claims {
+        Some(c) => format!("Hello, {}!", c.sub),
+        None    => "Hello, anonymous!".to_string(),
+    }
+}
+```
+
+### Custom claims type
+
+```rust
+#[derive(Debug, Clone, serde::Deserialize)]
+struct MyClaims { sub: String, role: String }
+
+let config = JwtConfigurationBuilder::<MyClaims>::new()
+    .with_decoding_key(key)
+    .with_algorithm(Algorithm::RS256)
+    .build()?;
+
+async fn handler(JwtClaims(claims): JwtClaims<MyClaims>) -> String {
+    format!("sub={} role={}", claims.sub, claims.role)
+}
 ```
 
 ## Configuration Cheat Sheet
@@ -320,9 +395,9 @@ Requires one of the `sql-cache-*` feature flags. An alternative L2 backend to Re
 
 ```toml
 # Choose one (or use sql-cache-all for testing):
-axum-oidc-client = { version = "0.3.0", features = ["sql-cache-sqlite"] }
-axum-oidc-client = { version = "0.3.0", features = ["sql-cache-postgres"] }
-axum-oidc-client = { version = "0.3.0", features = ["sql-cache-mysql"] }
+axum-oidc-client = { version = "0.4.0", features = ["sql-cache-sqlite"] }
+axum-oidc-client = { version = "0.4.0", features = ["sql-cache-postgres"] }
+axum-oidc-client = { version = "0.4.0", features = ["sql-cache-mysql"] }
 ```
 
 ```rust
@@ -814,6 +889,33 @@ async fn test_refresh(session: AuthSession) -> String {
 | Refresh token empty                 | Check provider returns refresh_token in response         |
 | Frequent re-authentication          | Verify refresh tokens are being stored and used          |
 
+## Feature Flags
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `authentication` | ✅ yes | Core OAuth2/OIDC authentication layer (`AuthenticationLayer`, `AuthSession`, extractors) |
+| `jwt` | ✅ yes | Standalone JWT Bearer token validation (`JwtLayer`, `JwtClaims`, `OptionalJwtClaims`) |
+| `moka-cache` | ✅ yes | In-memory L1 cache backed by Moka (`TwoTierAuthCache`) |
+| `redis` | ❌ no | Redis L2 cache backend |
+| `sql-cache-sqlite` | ❌ no | SQLite L2 cache backend (via SQLx) |
+| `sql-cache-postgres` | ❌ no | PostgreSQL L2 cache backend (via SQLx) |
+| `sql-cache-mysql` | ❌ no | MySQL/MariaDB L2 cache backend (via SQLx) |
+| `sql-cache-all` | ❌ no | All SQL backends (useful for testing) |
+
+```toml
+# Default features (authentication + jwt + moka-cache)
+axum-oidc-client = "0.4.0"
+
+# Add Redis support
+axum-oidc-client = { version = "0.4.0", features = ["redis"] }
+
+# JWT only (no OAuth2 session layer)
+axum-oidc-client = { version = "0.4.0", default-features = false, features = ["jwt"] }
+
+# Authentication only (no JWT layer)
+axum-oidc-client = { version = "0.4.0", default-features = false, features = ["authentication", "moka-cache"] }
+```
+
 ## Testing
 
 ```bash
@@ -824,7 +926,7 @@ cargo test
 cargo test --features redis
 
 # Run example
-cargo run --example sample-server -- \
+cargo run --example www-server -- \
   --client-id YOUR_ID \
   --client-secret YOUR_SECRET
 ```
@@ -849,5 +951,5 @@ openssl rand -hex 32
 
 ---
 
-**Version:** 0.3.0  
+**Version:** 0.4.0  
 **Last Updated:** 2026-03-04

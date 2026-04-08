@@ -31,22 +31,29 @@ tokio = { version = "1", features = ["full"] }
 
 ### Feature Flags
 
-- `moka-cache` - Enable the two-tier in-memory Moka L1 cache wrapping any `AuthCache` L2 backend (**enabled by default**)
-- `redis` - Enable Redis cache backend with default TLS
-- `redis-rustls` - Enable Redis with rustls for TLS
-- `redis-native-tls` - Enable Redis with native-tls
-- `sql-cache-postgres` - Enable PostgreSQL cache backend via sqlx
-- `sql-cache-mysql` - Enable MySQL/MariaDB cache backend via sqlx
-- `sql-cache-sqlite` - Enable SQLite cache backend via sqlx
-- `sql-cache-all` - Enable all three SQL backends at once (useful for testing)
+#### Top-level (default)
+
+- `authentication` *(default)* – The full OAuth2/OIDC stack: `AuthenticationLayer`, session management, `AuthCache`, `OAuthConfigurationBuilder`, route handlers, extractors, and logout handlers.  Implied by every cache/backend feature.
+- `jwt` *(default)* – JWT validation utilities: `JwtLayer`, `OidcClaims`, `JwtConfiguration`, `JwtConfigurationBuilder`, `JwtClaims`, `OptionalJwtClaims`.
+
+#### Cache backends (each implies `authentication`)
+
+- `moka-cache` *(default)* – Two-tier in-memory Moka L1 cache
+- `redis` – Redis cache backend (rustls TLS)
+- `redis-rustls` – Redis with explicit rustls TLS
+- `redis-native-tls` – Redis with native-tls
+- `sql-cache-postgres` – PostgreSQL backend via sqlx
+- `sql-cache-mysql` – MySQL/MariaDB backend via sqlx
+- `sql-cache-sqlite` – SQLite backend via sqlx
+- `sql-cache-all` – All three SQL backends at once (useful for testing)
 
 ```toml
 [dependencies]
-# Default: includes moka-cache feature
+# Default: includes authentication, jwt, and moka-cache features
 axum-oidc-client = "0.3.0"
 
-# With Redis support
-axum-oidc-client = { version = "0.3.0", features = ["redis"] }
+# With JWT validation + Redis cache backend
+axum-oidc-client = { version = "0.3.0", features = ["jwt", "redis"] }
 
 # With Redis + two-tier cache (L1 Moka + L2 Redis)
 axum-oidc-client = { version = "0.3.0", features = ["moka-cache", "redis"] }
@@ -127,6 +134,47 @@ async fn protected(session: axum_oidc_client::auth_session::AuthSession) -> Stri
 }
 ```
 
+## JWT Validation
+
+The `jwt` feature (enabled by default) provides standalone JWT Bearer token validation via `JwtLayer`. This is useful when you want to protect routes using JWT tokens issued by an external identity provider, without requiring the full OAuth2 session flow.
+
+```rust
+use axum::{Router, routing::get};
+use axum_oidc_client::{
+    jwt::{JwtLayer, JwtConfigurationBuilder, Algorithm, DecodingKey, OidcClaims},
+    extractors::JwtClaims,
+};
+use std::sync::Arc;
+
+async fn protected(JwtClaims(claims): JwtClaims<OidcClaims>) -> String {
+    format!("Hello, {}!", claims.sub)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Option A: shared secret (HS256)
+    let config = JwtConfigurationBuilder::<OidcClaims>::new()
+        .with_decoding_key(DecodingKey::from_secret(b"my-secret"))
+        .with_algorithm(Algorithm::HS256)
+        .with_audience(vec!["my-client-id".to_string()])
+        .build()?;
+
+    // Option B: OIDC auto-discovery (RS256, fetches JWKS automatically)
+    // let config = JwtConfigurationBuilder::<OidcClaims>::new()
+    //     .with_issuer("https://accounts.google.com").await?
+    //     .with_audience(vec!["my-client-id".to_string()])
+    //     .build()?;
+
+    let app = Router::new()
+        .route("/protected", get(protected))
+        .layer(JwtLayer::new(Arc::new(config)));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+```
+
 ## Automatic ID Token and Access Token Refresh
 
 The library automatically refreshes expired ID tokens and access tokens when they expire. This happens transparently when you use the provided extractors.
@@ -186,11 +234,44 @@ Refresh tokens are automatically:
 
 ## API Documentation
 
+### Module Overview
+
+The library is organised under two top-level namespaces, each gated by a matching feature flag.
+
+#### `authentication` module (and backward-compat aliases)
+
+Requires the `authentication` feature (default). All sub-modules are also accessible via their short aliases for backward compatibility.
+
+| Canonical path | Alias | Key types |
+|---|---|---|
+| `authentication` | `auth` | `AuthenticationLayer` (Tower layer), `AuthLayer` *(backward-compat alias — see note below)*, `OAuthConfiguration`, `CodeChallengeMethod`, `LogoutHandler` |
+| `authentication::builder` | `auth_builder` | `OAuthConfigurationBuilder` — supports `.with_issuer(url).await?` for OIDC auto-discovery |
+| `authentication::cache` | `auth_cache` | `AuthCache` trait |
+| `authentication::session` | `auth_session` | `AuthSession` |
+| `authentication::moka` | `cache` | `TwoTierAuthCache`, `TwoTierCacheConfig` *(requires `moka-cache`)* |
+| `authentication::redis` | `redis` | Redis `AuthCache` *(requires `redis`)* |
+| `authentication::sql_cache` | `sql_cache` | `SqlAuthCache`, `SqlCacheConfig` *(requires `sql-cache-*`)* |
+| `authentication::logout` | `logout` | `DefaultLogoutHandler`, `OidcLogoutHandler` |
+| `extractors` | — | `AuthSession`, `AccessToken`, `IdToken`, `OptionalAuthSession`, `OptionalAccessToken`, `OptionalIdToken`, `JwtClaims<C>`, `OptionalJwtClaims<C>` |
+
+> **`AuthLayer` rename note:** `AuthLayer` is a backward-compatible type alias for `AuthenticationLayer`. All existing code that references `AuthLayer` compiles unchanged.
+
+#### `jwt` module
+
+Requires the `jwt` feature (default).
+
+| Path | Key types |
+|---|---|
+| `jwt` | `JwtLayer<C>`, `JwtConfiguration<C>`, `JwtConfigurationBuilder<C>`, `OidcClaims`, `decode_jwt`, `decode_jwt_unverified`, `Algorithm`, `DecodingKey`, `Validation` |
+| `jwt::oidc` | `OidcClaims` (also re-exported as `jwt::OidcClaims`) |
+
 ### Core Modules
 
 #### `sql_cache`
 
 SQL database cache backend implementing `AuthCache` via [`sqlx`](https://crates.io/crates/sqlx). An alternative L2 backend to Redis — useful when you already run a SQL database and want to avoid an extra Redis dependency.
+
+Also accessible as `authentication::sql_cache`.
 
 **Supported databases:**
 
@@ -331,6 +412,8 @@ SELECT cron.unschedule('vacuum-oidc-cache');
 
 Two-tier authentication cache combining a fast in-process [Moka](https://crates.io/crates/moka) L1 cache with any `AuthCache` implementation as the L2 backend (requires `moka-cache` feature, **enabled by default**).
 
+Also accessible as `authentication::moka`.
+
 **Cache-aside pattern:**
 
 | Operation  | L1 (Moka)                      | L2 (backend)                   |
@@ -348,6 +431,8 @@ let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
     TwoTierAuthCache::new(None, TwoTierCacheConfig::default())?
 );
 ```
+
+The same type is also importable as `axum_oidc_client::authentication::moka::TwoTierAuthCache`; both paths refer to the same type.
 
 **Two-tier (Moka L1 + Redis L2):**
 
@@ -370,9 +455,12 @@ let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
 
 The core authentication module providing the main layer and configuration types.
 
+Also accessible as `authentication`.
+
 **Key Types:**
 
-- `AuthenticationLayer` - Tower layer for adding authentication to your Axum app (`AuthLayer` is kept as a backward-compatible type alias)
+- `AuthenticationLayer` - Tower layer for adding authentication to your Axum app
+- `AuthLayer` - Backward-compatible type alias for `AuthenticationLayer`; existing code using `AuthLayer` compiles unchanged
 - `OAuthConfiguration` - Configuration for OAuth2 endpoints and credentials
 - `CodeChallengeMethod` - PKCE code challenge method (S256 or Plain)
 - `LogoutHandler` - Trait for implementing custom logout behavior
@@ -380,6 +468,8 @@ The core authentication module providing the main layer and configuration types.
 #### `auth_builder`
 
 Builder pattern for constructing OAuth configurations.
+
+Also accessible as `authentication::builder`.
 
 **Example:**
 
@@ -397,9 +487,24 @@ let config = OAuthConfigurationBuilder::default()
     .build()?;
 ```
 
+**OIDC auto-discovery** (fetches endpoints from the provider's `/.well-known/openid-configuration`):
+
+```rust
+let config = OAuthConfigurationBuilder::default()
+    .with_issuer("https://accounts.google.com").await?
+    .with_client_id("my-client-id")
+    .with_client_secret("my-client-secret")
+    .with_redirect_uri("http://localhost:8080/auth/callback")
+    .with_private_cookie_key("secret-key-min-32-bytes-long")
+    .with_scopes(vec!["openid", "email", "profile"])
+    .build()?;
+```
+
 #### `auth_cache`
 
 Cache trait and implementations for storing authentication state.
+
+Also accessible as `authentication::cache`.
 
 **Trait:**
 
@@ -413,9 +518,9 @@ pub trait AuthCache {
 
 **Built-in Implementations:**
 
-- `cache::TwoTierAuthCache` - Two-tier cache: fast in-process Moka L1 + any `AuthCache` as L2 backend (requires `moka-cache` feature, **enabled by default**)
-- `redis::AuthCache` - Redis-backed cache (requires `redis` feature)
-- `sql_cache::SqlAuthCache` - SQL-backed cache supporting PostgreSQL, MySQL, and SQLite (requires `sql-cache-*` feature)
+- `cache::TwoTierAuthCache` (alias: `authentication::moka::TwoTierAuthCache`) - Two-tier cache: fast in-process Moka L1 + any `AuthCache` as L2 backend (requires `moka-cache` feature, **enabled by default**)
+- `redis::AuthCache` (alias: `authentication::redis::AuthCache`) - Redis-backed cache (requires `redis` feature)
+- `sql_cache::SqlAuthCache` (alias: `authentication::sql_cache::SqlAuthCache`) - SQL-backed cache supporting PostgreSQL, MySQL, and SQLite (requires `sql-cache-*` feature)
 
 **Custom Implementation:**
 
@@ -445,6 +550,8 @@ impl AuthCache for MyCache {
 
 Session management and token handling.
 
+Also accessible as `authentication::session`.
+
 **Key Type:**
 
 - `AuthSession` - Contains authenticated user's session data
@@ -473,6 +580,8 @@ Type-safe extractors for accessing authenticated user data with automatic ID tok
 - `IdToken` - ID token extractor (automatically refreshes if expired)
 - `OptionalAccessToken` - Optional access token (automatically refreshes if expired)
 - `OptionalIdToken` - Optional ID token (automatically refreshes if expired)
+- `JwtClaims<C>` - Extracts decoded JWT claims from a Bearer token; returns 401 if no valid Bearer token is present. Requires `JwtLayer` to be installed and the `jwt` feature (default).
+- `OptionalJwtClaims<C>` - Same as `JwtClaims<C>` but returns `None` for unauthenticated requests instead of 401. Requires `JwtLayer` and the `jwt` feature (default).
 
 **Example:**
 
@@ -511,6 +620,8 @@ async fn home(OptionalIdToken(token): OptionalIdToken) -> String {
 
 Logout handler implementations.
 
+Also accessible as `authentication::logout`.
+
 **Built-in Handlers:**
 
 1. **DefaultLogoutHandler** - Simple local logout with session cleanup
@@ -522,6 +633,8 @@ Logout handler implementations.
 
    ```rust
    use axum_oidc_client::logout::handle_default_logout::DefaultLogoutHandler;
+   // Also available as:
+   // use axum_oidc_client::authentication::logout::handle_default_logout::DefaultLogoutHandler;
    let handler = Arc::new(DefaultLogoutHandler);
    ```
 
@@ -881,7 +994,7 @@ async fn protected(session: axum_oidc_client::auth_session::AuthSession) -> Stri
 
 ## Examples
 
-See the `examples/sample-server` directory for a complete working example with:
+See the `examples/www-server` directory for a complete working example with:
 
 - Environment variable configuration
 - CLI argument parsing
@@ -892,7 +1005,7 @@ See the `examples/sample-server` directory for a complete working example with:
 Run the example:
 
 ```bash
-cd examples/sample-server
+cd examples/www-server
 cargo run -- --client-id YOUR_ID --client-secret YOUR_SECRET
 ```
 
@@ -938,7 +1051,7 @@ cargo test --features sql-cache-sqlite
 cargo test --all-features
 
 # Run example
-cargo run --example sample-server
+cargo run --example www-server
 ```
 
 ## Contributing

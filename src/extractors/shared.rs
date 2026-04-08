@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::{
-    auth::{calculate_token_expiration, OAuthConfiguration, SESSION_KEY},
-    auth_cache::AuthCache,
-    auth_session::AuthSession,
+    authentication::{
+        cache::AuthCache, calculate_token_expiration, session::AuthSession, OAuthConfiguration,
+        SESSION_KEY,
+    },
     errors::Error,
 };
 
