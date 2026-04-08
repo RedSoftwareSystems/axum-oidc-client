@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.3.0"
+axum-oidc-client = "0.4"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
