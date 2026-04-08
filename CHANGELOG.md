@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`OAuthConfigurationBuilder::with_token_request_redirect_uri(bool)`**: controls whether
+  `redirect_uri` is included in the Authorization Code → Access Token exchange request
+  ([RFC 6749 §4.1.3](https://www.rfc-editor.org/rfc/rfc6749#section-4.1.3)).  Defaults to
+  `true` (backward-compatible).  Set to `false` for providers such as Okta that reject a
+  redundant `redirect_uri` when only one redirect URI is registered on the application.
+
+- **`OAuthConfiguration::token_request_redirect_uri: bool`**: new field on the configuration
+  struct exposing the same setting; defaults to `true`.
+
 ## [0.4.0] - 2026-04-08
 
 ### Added

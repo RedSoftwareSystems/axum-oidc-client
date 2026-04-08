@@ -57,7 +57,7 @@ use axum::{
     extract::Request,
     response::{IntoResponse, Response},
 };
-use axum_extra::extract::{cookie::Key, PrivateCookieJar};
+use axum_extra::extract::{PrivateCookieJar, cookie::Key};
 use chrono::{Duration, Local};
 use futures_util::future::BoxFuture;
 use http::request::Parts;
@@ -98,7 +98,7 @@ use crate::{
         cache::AuthCache,
         router::{
             handle_auth::handle_auth,
-            handle_callback::{handle_callback, AccessTokenResponse},
+            handle_callback::{AccessTokenResponse, handle_callback},
             handle_default::handle_default,
         },
         session::AuthSession,
@@ -266,6 +266,17 @@ pub struct OAuthConfiguration {
     pub client_secret: String,
     /// Redirect URI for OAuth2 callback
     pub redirect_uri: String,
+    /// Whether to include `redirect_uri` in the token exchange request.
+    ///
+    /// Per [RFC 6749 §4.1.3](https://www.rfc-editor.org/rfc/rfc6749#section-4.1.3) the
+    /// `redirect_uri` parameter is **required** in the token request only when it was
+    /// included in the authorization request.  Some providers (e.g. Okta when the
+    /// redirect URI is the only one registered) reject the token request when
+    /// `redirect_uri` is sent redundantly.
+    ///
+    /// - `true` (default) – include `redirect_uri` in the token request.
+    /// - `false` – omit `redirect_uri` from the token request.
+    pub token_request_redirect_uri: bool,
     /// OAuth2 authorization endpoint URL
     pub authorization_endpoint: String,
     /// OAuth2 token endpoint URL
@@ -501,7 +512,19 @@ where
 
         match path.as_str() {
             p if p == auth_route => {
-                Box::pin(async move { Ok(dispatch_auth(configuration, cache).await) })
+                // Extract the optional `redirect` query parameter from the request URI.
+                // e.g. GET /auth?redirect=%2Fdashboard  →  post_login_redirect = Some("/dashboard")
+                let post_login_redirect = uri
+                    .query()
+                    .and_then(|qs| {
+                        serde_html_form::from_str::<std::collections::HashMap<String, String>>(qs)
+                            .ok()
+                    })
+                    .and_then(|map| map.get("redirect").cloned());
+
+                Box::pin(async move {
+                    Ok(dispatch_auth(configuration, cache, post_login_redirect).await)
+                })
             }
             p if p == callback_route => {
                 let (mut parts, _) = request.into_parts();
@@ -534,8 +557,9 @@ where
 async fn dispatch_auth(
     configuration: Arc<OAuthConfiguration>,
     cache: Arc<dyn AuthCache + Send + Sync>,
+    post_login_redirect: Option<String>,
 ) -> Response {
-    handle_auth(configuration, cache)
+    handle_auth(configuration, cache, post_login_redirect)
         .await
         .unwrap_or_else(IntoResponse::into_response)
 }

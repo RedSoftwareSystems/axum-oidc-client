@@ -9,7 +9,7 @@ use futures_util::future::BoxFuture;
 
 use crate::{
     authentication::{
-        cache::AuthCache, session::AuthSession, CodeChallengeMethod, OAuthConfiguration,
+        CodeChallengeMethod, OAuthConfiguration, cache::AuthCache, session::AuthSession,
     },
     errors::Error,
 };
@@ -77,6 +77,7 @@ pub(crate) fn create_test_config() -> OAuthConfiguration {
         client_id: "test-client".to_string(),
         client_secret: "test-secret".to_string(),
         redirect_uri: "http://localhost:8080/auth/callback".to_string(),
+        token_request_redirect_uri: true,
         authorization_endpoint: "http://localhost/auth".to_string(),
         token_endpoint: "http://localhost/token".to_string(),
         end_session_endpoint: None,

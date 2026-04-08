@@ -497,8 +497,15 @@ let config = OAuthConfigurationBuilder::default()
     .with_redirect_uri("http://localhost:8080/auth/callback")
     .with_private_cookie_key("secret-key-min-32-bytes-long")
     .with_scopes(vec!["openid", "email", "profile"])
+    // Optional: set false if your provider rejects redirect_uri in the token request
+    // .with_token_request_redirect_uri(false)
     .build()?;
 ```
+
+> **Provider compatibility note:** By default `redirect_uri` is included in the token exchange
+> request (RFC 6749 §4.1.3).  Call `.with_token_request_redirect_uri(false)` if your provider
+> rejects redundant `redirect_uri` parameters during token exchange (e.g. Okta when only one
+> redirect URI is registered).
 
 #### `auth_cache`
 

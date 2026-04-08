@@ -113,7 +113,7 @@ pub async fn home(OptionalIdToken(id_token): OptionalIdToken) -> impl IntoRespon
     } else {
         r#"
                     <a href="/resources">Resources</a>
-                    <a href="/auth">Login with OAuth2</a>
+                    <a href="/auth?redirect=/home">Login with OAuth2</a>
         "#
     };
 

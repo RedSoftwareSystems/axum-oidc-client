@@ -1,7 +1,7 @@
 use axum::response::{Html, IntoResponse, Response};
-use axum_extra::extract::{cookie::Cookie, PrivateCookieJar};
+use axum_extra::extract::{PrivateCookieJar, cookie::Cookie};
 
-use http::{request::Parts, StatusCode, Uri};
+use http::{StatusCode, Uri, request::Parts};
 use reqwest::{self, Client};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -41,38 +41,50 @@ async fn get_auth_tokens(
     cache: Arc<dyn AuthCache + Send + Sync>,
     client: Arc<Client>,
     uri: &Uri,
-) -> Result<AccessTokenResponse, Error> {
+) -> Result<(AccessTokenResponse, Option<String>), Error> {
     let querystring = uri.query();
     let query = querystring
         .map(|qs| serde_html_form::from_str::<CodeExchange>(qs).map_err(Error::InvalidCodeResponse))
         .ok_or(Error::MissingPatameter("code".to_owned()))
         .flatten()?;
 
+    // Split the state into the cache key (UUID) and optional post-login redirect path.
+    // Format: "<uuid>" or "<uuid>|<path>".
+    let (state_key, post_login_redirect) = match query.state.splitn(2, '|').collect::<Vec<_>>()[..]
+    {
+        [key, path] => (key.to_string(), Some(path.to_string())),
+        [key] => (key.to_string(), None),
+        _ => (query.state.clone(), None),
+    };
+
     let OAuthConfiguration {
         redirect_uri,
         client_id,
         token_endpoint,
         client_secret,
+        token_request_redirect_uri,
         ..
     } = configuration.as_ref();
 
     let verifier = cache
-        .get_code_verifier(&query.state)
+        .get_code_verifier(&state_key)
         .await?
         .ok_or(Error::MissingCodeVerifier)?;
 
     // Invalidate immediately after retrieval — the verifier is single-use.
     // This runs before the token exchange so that a network error or a
     // rejected exchange cannot be retried with the same verifier.
-    cache.invalidate_code_verifier(&query.state).await?;
+    cache.invalidate_code_verifier(&state_key).await?;
 
-    let params = [
+    let mut params: Vec<(&str, &str)> = vec![
         ("grant_type", "authorization_code"),
         ("code", &query.code),
-        ("redirect_uri", redirect_uri),
         ("client_id", client_id),
         ("code_verifier", &verifier),
     ];
+    if *token_request_redirect_uri {
+        params.push(("redirect_uri", redirect_uri));
+    }
 
     let url = reqwest::Url::parse(token_endpoint)
         .map_err(|_| Error::NotValidUri(token_endpoint.to_string()))?;
@@ -95,7 +107,7 @@ async fn get_auth_tokens(
         StatusCode::OK => {
             let auth_session = res.json::<AccessTokenResponse>().await?;
 
-            Ok(auth_session)
+            Ok((auth_session, post_login_redirect))
         }
         status => {
             let err = res.text().await?;
@@ -131,7 +143,7 @@ pub async fn handle_callback(parts: &mut Parts, uri: Uri) -> Result<Response, Er
 
     let id = Uuid::new_v4().to_string();
 
-    let token_response =
+    let (token_response, post_login_redirect) =
         get_auth_tokens(configuration.clone(), cache.clone(), client.clone(), &uri).await?;
 
     cache
@@ -146,14 +158,21 @@ pub async fn handle_callback(parts: &mut Parts, uri: Uri) -> Result<Response, Er
             .secure(true)
             .max_age(Duration::minutes(60)),
     );
+
+    // Belt-and-suspenders validation: re-check the redirect path even though
+    // handle_auth already validated it before embedding it in the state.  The
+    // provider echoes the state back verbatim, but a defensive check here
+    // prevents any open-redirect if the state were somehow tampered with.
+    let redirect_to = match post_login_redirect {
+        Some(path) if path.starts_with('/') && !path.starts_with("//") => path,
+        _ => "/".to_string(),
+    };
+
     Ok((
         jar,
-        Html(
-            r#"
-        <head>
-          <meta http-equiv="Refresh" content="0; URL=/" />
-        </head>"#,
-        ),
+        Html(format!(
+            r#"<head><meta http-equiv="Refresh" content="0; URL={redirect_to}" /></head>"#
+        )),
     )
         .into_response())
 }

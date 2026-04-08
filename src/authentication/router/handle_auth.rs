@@ -4,7 +4,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
-    authentication::{cache::AuthCache, OAuthConfiguration},
+    authentication::{OAuthConfiguration, cache::AuthCache},
     errors::Error,
 };
 
@@ -42,6 +42,7 @@ fn create_auth_request(
 pub async fn handle_auth(
     configuration: Arc<OAuthConfiguration>,
     cache: Arc<dyn AuthCache + Send + Sync>,
+    post_login_redirect: Option<String>,
 ) -> Result<Response, Error> {
     let code_challenge_method: Method = configuration.code_challenge_method.to_owned().into();
     let (code_verifier, code_challenge) =
@@ -50,8 +51,22 @@ pub async fn handle_auth(
     let verifier = code_verifier.get().to_string();
     let state = Uuid::new_v4().to_string();
 
+    // Encode a safe redirect path into the state so the callback can recover it
+    // after the provider round-trip.  The `|` separator never appears in a UUID
+    // or a valid relative path, making splitting unambiguous.
+    //
+    // Security: only relative paths that start with `/` (but not `//`, which
+    // would be treated as a protocol-relative URL) are accepted.  Anything else
+    // is silently dropped in favour of the default `/` redirect.
+    let state_with_redirect = match post_login_redirect {
+        Some(path) if path.starts_with('/') && !path.starts_with("//") => {
+            format!("{}|{}", state, path)
+        }
+        _ => state.clone(),
+    };
+
     cache.set_code_verifier(&state, &verifier).await?;
-    let url = create_auth_request(&configuration, &code_challenge, &state)?;
+    let url = create_auth_request(&configuration, &code_challenge, &state_with_redirect)?;
 
     Ok(Redirect::temporary(&url).into_response())
 }

@@ -451,6 +451,7 @@ Fluent API for building configurations.
 | `with_post_logout_redirect_uri(uri)` | No       | Set post-logout redirect                           |
 | `with_custom_ca_cert(path)`          | No       | Set custom CA certificate                          |
 | `with_token_max_age(seconds)`        | No       | Set token max age                                  |
+| `with_token_request_redirect_uri(bool)` | No    | Include `redirect_uri` in the token request (default: `true`; set `false` for providers that reject it) |
 | `build()`                            | -        | Build the configuration                            |
 
 > *When `with_issuer` is used, `with_authorization_endpoint` and `with_token_endpoint` are not
@@ -1616,6 +1617,30 @@ The `AuthenticationLayer` (also accessible via the `AuthLayer` alias) adds these
 > let expires = session.expires.map(|e| e.to_string()).unwrap_or_else(|| "(no expiry)".to_string());
 > let scope = session.scope.as_deref().unwrap_or("(none)");
 > ```
+
+**Issue: Token exchange fails with `invalid_request` or `redirect_uri mismatch` from the provider**
+
+> **Solution:**
+> Some providers (e.g. Okta, certain Azure AD configurations) reject the token-exchange
+> request when `redirect_uri` is included redundantly — typically when only one redirect URI
+> is registered on the application.  Set `with_token_request_redirect_uri(false)` on the
+> builder to omit the parameter:
+>
+> ```rust
+> let config = OAuthConfigurationBuilder::default()
+>     .with_issuer("https://your-provider.example.com").await?
+>     .with_client_id("your-client-id")
+>     .with_client_secret("your-client-secret")
+>     .with_redirect_uri("http://localhost:8080/auth/callback")
+>     .with_private_cookie_key(&env::var("COOKIE_KEY")?)
+>     .with_session_max_age(30)
+>     .with_token_request_redirect_uri(false)
+>     .build()?;
+> ```
+>
+> Per [RFC 6749 §4.1.3](https://www.rfc-editor.org/rfc/rfc6749#section-4.1.3), `redirect_uri`
+> is required in the token request only when it was included in the authorization request, and
+> must be identical if present.  The default (`true`) includes it for maximum compatibility.
 
 **Issue: `JwtClaims` extractor returns 401 even though a token is sent**
 

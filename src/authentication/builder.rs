@@ -182,7 +182,7 @@ impl Display for Scopes {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct OAuthConfigurationBuilder {
     /// Secret key for encrypting session cookies
     pub private_cookie_key: Option<Key>,
@@ -192,6 +192,8 @@ pub struct OAuthConfigurationBuilder {
     pub client_secret: Option<String>,
     /// Redirect URI for OAuth2 callback
     pub redirect_uri: Option<String>,
+    /// See [`OAuthConfiguration::token_request_redirect_uri`].
+    pub token_request_redirect_uri: bool,
     /// OAuth2 authorization endpoint URL
     pub authorization_endpoint: Option<String>,
     /// OAuth2 token endpoint URL
@@ -218,6 +220,30 @@ pub struct OAuthConfigurationBuilder {
     /// Tracks whether `with_scopes` was called explicitly so that `with_issuer`
     /// knows not to overwrite the scopes with the discovered values.
     scopes_explicit: bool,
+}
+
+impl Default for OAuthConfigurationBuilder {
+    fn default() -> Self {
+        Self {
+            private_cookie_key: None,
+            client_id: None,
+            client_secret: None,
+            redirect_uri: None,
+            token_request_redirect_uri: true,
+            authorization_endpoint: None,
+            token_endpoint: None,
+            end_session_endpoint: None,
+            post_logout_redirect_uri: None,
+            scopes: Scopes::default(),
+            code_challenge_method: CodeChallengeMethod::default(),
+            custom_ca_cert: None,
+            session_max_age: None,
+            token_max_age: None,
+            base_path: None,
+            code_challenge_method_explicit: false,
+            scopes_explicit: false,
+        }
+    }
 }
 
 impl OAuthConfigurationBuilder {
@@ -458,6 +484,30 @@ impl OAuthConfigurationBuilder {
     pub fn with_redirect_uri(self, redirect_uri: &str) -> Self {
         Self {
             redirect_uri: Some(redirect_uri.to_string()),
+            ..self
+        }
+    }
+
+    /// Control whether `redirect_uri` is included in the token exchange request.
+    ///
+    /// Per [RFC 6749 §4.1.3](https://www.rfc-editor.org/rfc/rfc6749#section-4.1.3)
+    /// `redirect_uri` is required in the token request only when it was present in
+    /// the authorization request.  Set this to `false` when your provider rejects
+    /// redundant `redirect_uri` parameters.
+    ///
+    /// Defaults to `true`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
+    ///
+    /// let builder = OAuthConfigurationBuilder::default()
+    ///     .with_token_request_redirect_uri(false);
+    /// ```
+    pub fn with_token_request_redirect_uri(self, include: bool) -> Self {
+        Self {
+            token_request_redirect_uri: include,
             ..self
         }
     }
@@ -793,6 +843,7 @@ impl OAuthConfigurationBuilder {
             code_challenge_method: self.code_challenge_method,
             custom_ca_cert: self.custom_ca_cert,
             base_path: self.base_path.unwrap_or_else(|| "/auth".to_string()),
+            token_request_redirect_uri: self.token_request_redirect_uri,
         };
         Ok(layer)
     }
