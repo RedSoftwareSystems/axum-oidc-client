@@ -79,3 +79,6 @@ sql-cache-sqlite   = ["authentication", "dep:sqlx", "sqlx?/sqlite"]
 
 # Convenience feature that enables all three SQL backends at once (for tests).
 sql-cache-all = ["sql-cache-postgres", "sql-cache-mysql", "sql-cache-sqlite"]
+
+# Convenience feature that enables every feature in the crate.
+full = ["authentication", "jwt", "moka-cache", "redis", "redis-rustls", "sql-cache-all"]
