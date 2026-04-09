@@ -10,7 +10,7 @@ repository = "https://github.com/RedSoftwareSystems/axum-oidc-client"
 
 [dependencies]
 tokio = { version = "1.41", features = ["full"] }
-reqwest = { version = "0.12.22", features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12.22", default-features = false, features = ["json"] }
 pkce-std = "0.2.1"
 serde_html_form = "0.2.7"
 axum-extra = { version = "0.10.0", features = [
@@ -57,9 +57,16 @@ tempfile = "3"
 #
 # Both are in `default` so a plain `[dependencies] axum-oidc-client = "…"`
 # gives users the complete feature set without any extra configuration.
-default = ["authentication", "jwt", "moka-cache"]
+default = ["authentication", "jwt", "moka-cache", "reqwest-rustls-tls"]
 
 authentication = []
+
+# ── reqwest TLS backends ──────────────────────────────────────────────────────
+# Exactly one should be enabled. `reqwest-rustls-tls` is the default.
+reqwest-rustls-tls          = ["reqwest/rustls-tls"]
+reqwest-native-tls          = ["reqwest/native-tls"]
+reqwest-native-tls-vendored = ["reqwest/native-tls-vendored"]
+
 jwt = ["dep:jsonwebtoken", "dep:base64"]
 
 # ── Moka in-process L1 cache ──────────────────────────────────────────────────
@@ -81,4 +88,4 @@ sql-cache-sqlite   = ["authentication", "dep:sqlx", "sqlx?/sqlite"]
 sql-cache-all = ["sql-cache-postgres", "sql-cache-mysql", "sql-cache-sqlite"]
 
 # Convenience feature that enables every feature in the crate.
-full = ["authentication", "jwt", "moka-cache", "redis", "redis-rustls", "sql-cache-all"]
+full = ["authentication", "jwt", "moka-cache", "redis", "redis-native-tls", "redis-rustls", "sql-cache-all", "reqwest-rustls-tls"]
