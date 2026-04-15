@@ -1,0 +1,242 @@
+{
+    // ── AxumOidcClient devcontainer ──────────────────────────────────────────────────
+    // Rust + Node.js development environment for the AxumOidcClient gateway workspace.
+    //
+    // Features:
+    //   - Rust stable toolchain (rustfmt, clippy, rust-analyzer, cargo tools)
+    //   - Node.js 22 LTS (for the example CDN/backend services)
+    //   - OpenSSL dev headers (required by native-tls / reqwest)
+    //   - Docker-outside-of-Docker (host Docker socket mounted read-write)
+    //   - Security: non-root user, read-only workspace, secret scanning
+    "name": "AxumOidcClient",
+    // ── Build ─────────────────────────────────────────────────────────────────
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "RUST_VERSION": "1"
+        },
+        "cacheFrom": "mcr.microsoft.com/devcontainers/rust:1-bookworm"
+    },
+    // ── Devcontainer features ─────────────────────────────────────────────────
+    // Features are installed by the devcontainer CLI on top of the image,
+    // independently of the Dockerfile, and are kept up to date automatically.
+    "features": {
+        // Node.js 22 LTS — installs node, npm, nvm inside the container.
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "22",
+            "nodeGypDependencies": true
+        },
+        // Docker-outside-of-Docker — installs the Docker CLI and Compose plugin,
+        // then mounts the host daemon socket automatically. Safer than a manual
+        // socket bind-mount because the feature also sets correct group membership.
+        "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+            "moby": false,
+            "installDockerComposeSwitch": true,
+            "version": "latest",
+            "dockerDashComposeVersion": "v2"
+        }
+    },
+    // ── Runtime options ───────────────────────────────────────────────────────
+    "runArgs": [
+        // Allow ptrace-based debuggers (lldb, gdb) inside the container.
+        "--cap-add=SYS_PTRACE",
+        "--security-opt",
+        "seccomp=unconfined",
+        // Give the container a meaningful hostname.
+        "--hostname",
+        "oidc-client-dev"
+    ],
+    // ── Mounts ────────────────────────────────────────────────────────────────
+    "mounts": [
+        // Persist the Cargo registry and build cache across container rebuilds.
+        // This avoids re-downloading crates every time the image is rebuilt.
+        "source=oidc-client-cargo-registry,target=/home/vscode/.cargo/registry,type=volume",
+        "source=oidc-client-cargo-git,target=/home/vscode/.cargo/git,type=volume",
+        // Persist the compiled target directory so incremental builds survive
+        // container restarts without a full recompile.
+        "source=oidc-client-target,target=${containerWorkspaceFolder}/target,type=volume"
+    ],
+    // ── Non-root user ─────────────────────────────────────────────────────────
+    // The base image creates a `vscode` user (UID 1000). Running as non-root
+    // prevents accidental host-filesystem damage and matches best practices.
+    "remoteUser": "vscode",
+    // ── Environment variables ─────────────────────────────────────────────────
+    "remoteEnv": {
+        // Surface the Cargo bin directory in the shell PATH.
+        "PATH": "${containerEnv:PATH}:/home/vscode/.cargo/bin",
+        // Ensure OpenSSL pkg-config metadata is discoverable by cargo build scripts.
+        "PKG_CONFIG_PATH": "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig",
+        // Colour output for Rust compiler messages.
+        "CARGO_TERM_COLOR": "always",
+        // Set a sensible default log level for local development.
+        "RUST_LOG": "debug",
+        // Emit full backtraces by default.
+        "RUST_BACKTRACE": "1"
+    },
+    // ── Post-create setup ─────────────────────────────────────────────────────
+    // Runs once after the container is first created. Installs Node dependencies
+    // for the example services so they are immediately usable.
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+    // ── VS Code / Cursor settings ─────────────────────────────────────────────
+    "customizations": {
+        "vscode": {
+            // ── Extensions ──────────────────────────────────────────────────────
+            "extensions": [
+                // ── Rust ──────────────────────────────────────────────────────────
+                // rust-analyzer: full IDE support (completions, inlay hints, etc.)
+                "rust-lang.rust-analyzer",
+                // Syntax highlighting for TOML (Cargo.toml)
+                "tamasfe.even-better-toml",
+                // Cargo.toml version lens and dependency management
+                "serayuzgur.crates",
+                // CodeLLDB: native Rust debugger
+                "vadimcn.vscode-lldb",
+                // ── Web / Node (example services) ─────────────────────────────────
+                // ESLint for the example backend/CDN JavaScript
+                "dbaeumer.vscode-eslint",
+                // Prettier for JS/JSON/YAML/Markdown formatting
+                "esbenp.prettier-vscode",
+                // Handlebars template syntax highlighting
+                "andrejunges.handlebars",
+                // ── YAML / Docker ─────────────────────────────────────────────────
+                // Full YAML language support (schema validation, hover docs)
+                "redhat.vscode-yaml",
+                // Dockerfile syntax highlighting and linting
+                "ms-azuretools.vscode-docker",
+                // Docker Compose file support
+                "p1c2u.docker-compose",
+                // ── Git ───────────────────────────────────────────────────────────
+                // GitLens — enhanced git blame, history, and branch management
+                "eamodio.gitlens",
+                // Git Graph — visual branch/commit graph
+                "mhutchie.git-graph",
+                // ── Security ──────────────────────────────────────────────────────
+                // Detect hardcoded secrets and credentials in source files
+                "trufflesecurity.trufflehog",
+                // ── Productivity ──────────────────────────────────────────────────
+                // Error Lens — inline diagnostic messages
+                "usernamehw.errorlens",
+                // Todo Tree — highlight TODO/FIXME/HACK comments
+                "gruntfuggly.todo-tree",
+                // Better Comments — coloured comment annotations
+                "aaron-bond.better-comments",
+                // Spell checker for comments and documentation
+                "streetsidesoftware.code-spell-checker",
+                // REST client for ad-hoc HTTP testing (useful for gateway testing)
+                "humao.rest-client",
+                // Markdown preview
+                "yzhang.markdown-all-in-one"
+            ],
+            // ── Editor / workspace settings ─────────────────────────────────────
+            "settings": {
+                // ── Editor ────────────────────────────────────────────────────────
+                "editor.formatOnSave": true,
+                "editor.rulers": [
+                    100
+                ],
+                "editor.tabSize": 4,
+                "editor.insertSpaces": true,
+                "editor.detectIndentation": false,
+                "editor.bracketPairColorization.enabled": true,
+                "editor.guides.bracketPairs": "active",
+                "editor.inlayHints.enabled": "on",
+                // ── Files ─────────────────────────────────────────────────────────
+                "files.trimTrailingWhitespace": true,
+                "files.insertFinalNewline": true,
+                "files.trimFinalNewlines": true,
+                "files.watcherExclude": {
+                    "**/target/**": true,
+                    "**/.git/**": true
+                },
+                "files.exclude": {
+                    "**/target": false
+                },
+                // ── Rust / rust-analyzer ──────────────────────────────────────────
+                "[rust]": {
+                    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+                    "editor.formatOnSave": true
+                },
+                "rust-analyzer.checkOnSave": true,
+                "rust-analyzer.check.command": "clippy",
+                "rust-analyzer.check.extraArgs": [
+                    "--",
+                    "-D",
+                    "warnings"
+                ],
+                "rust-analyzer.cargo.features": "all",
+                "rust-analyzer.cargo.buildScripts.enable": true,
+                "rust-analyzer.procMacro.enable": true,
+                "rust-analyzer.inlayHints.parameterHints.enable": true,
+                "rust-analyzer.inlayHints.typeHints.enable": true,
+                "rust-analyzer.inlayHints.chainingHints.enable": true,
+                "rust-analyzer.diagnostics.experimental.enable": true,
+                "rust-analyzer.lens.run.enable": true,
+                "rust-analyzer.lens.debug.enable": true,
+                // ── TOML ──────────────────────────────────────────────────────────
+                "[toml]": {
+                    "editor.defaultFormatter": "tamasfe.even-better-toml"
+                },
+                // ── JavaScript / Node ─────────────────────────────────────────────
+                "[javascript]": {
+                    "editor.defaultFormatter": "esbenp.prettier-vscode"
+                },
+                "[json]": {
+                    "editor.defaultFormatter": "esbenp.prettier-vscode"
+                },
+                "[jsonc]": {
+                    "editor.defaultFormatter": "esbenp.prettier-vscode"
+                },
+                // ── YAML ──────────────────────────────────────────────────────────
+                "[yaml]": {
+                    "editor.defaultFormatter": "esbenp.prettier-vscode",
+                    "editor.tabSize": 2
+                },
+                "yaml.validate": true,
+                // ── Markdown ──────────────────────────────────────────────────────
+                "[markdown]": {
+                    "editor.defaultFormatter": "yzhang.markdown-all-in-one",
+                    "editor.wordWrap": "on"
+                },
+                // ── Docker ────────────────────────────────────────────────────────
+                "docker.environment": {},
+                // ── Terminal ──────────────────────────────────────────────────────
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "terminal.integrated.env.linux": {
+                    "CARGO_TERM_COLOR": "always",
+                    "RUST_LOG": "debug",
+                    "RUST_BACKTRACE": "1"
+                },
+                // ── Git ───────────────────────────────────────────────────────────
+                "git.autofetch": true,
+                "git.enableSmartCommit": true,
+                "gitlens.hovers.currentLine.over": "line",
+                // ── Error Lens ────────────────────────────────────────────────────
+                "errorLens.enabledDiagnosticLevels": [
+                    "error",
+                    "warning",
+                    "info"
+                ],
+                "errorLens.followCursor": "closestProblem",
+                // ── Spell checker ─────────────────────────────────────────────────
+                "cSpell.words": [
+                    "axum",
+                    "oidc",
+                    "oauth",
+                    "oidc-client",
+                    "reqwest",
+                    "rustls",
+                    "tokio",
+                    "serde",
+                    "pkce",
+                    "moka",
+                    "mtls",
+                    "pkcs",
+                    "pfx",
+                    "handlebars",
+                    "devcontainer",
+                    "bookworm"
+                ]
+            }
+        }
+    }
+}
