@@ -6,7 +6,7 @@ A quick reference guide for common tasks and API usage.
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.4.0"
+axum-oidc-client = "0.5"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```

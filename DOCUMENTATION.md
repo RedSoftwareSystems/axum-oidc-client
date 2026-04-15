@@ -1,4 +1,4 @@
-# axum-oidc-client API Documentation (v0.4.0)
+# axum-oidc-client API Documentation (v0.5.0)
 
 Complete API documentation and usage guide for the axum-oidc-client library.
 
@@ -1661,5 +1661,5 @@ The `AuthenticationLayer` (also accessible via the `AuthLayer` alias) adds these
 
 ---
 
-**Last Updated:** 2026-03-25
-**Version:** 0.4.0
+**Last Updated:** 2026-04-15
+**Version:** 0.5.0
