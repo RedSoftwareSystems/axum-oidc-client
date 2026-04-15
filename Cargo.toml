@@ -34,6 +34,7 @@ moka = { version = "0.12.11", optional = true, features = ["future"]}
 chrono = {version = "0.4.42", features = ["serde"]}
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = { version = "0.1" }
+html-escape = { version = "0.2", optional = true }
 
 # sqlx is pulled in only when at least one sql-cache-* feature is enabled.
 # The runtime is always tokio; the database driver is selected per feature.
@@ -59,7 +60,7 @@ tempfile = "3"
 # gives users the complete feature set without any extra configuration.
 default = ["authentication", "jwt", "moka-cache", "reqwest-rustls-tls"]
 
-authentication = []
+authentication = ["dep:html-escape"]
 
 # ── reqwest TLS backends ──────────────────────────────────────────────────────
 # Exactly one should be enabled. `reqwest-rustls-tls` is the default.

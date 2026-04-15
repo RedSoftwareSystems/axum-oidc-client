@@ -163,7 +163,9 @@ pub async fn handle_callback(parts: &mut Parts, uri: Uri) -> Result<Response, Er
     // provider echoes the state back verbatim, but a defensive check here
     // prevents any open-redirect if the state were somehow tampered with.
     let redirect_to = match post_login_redirect {
-        Some(path) if path.starts_with('/') && !path.starts_with("//") => path,
+        Some(path) if path.starts_with('/') && !path.starts_with("//") => {
+            html_escape::encode_safe(&path).to_string()
+        }
         _ => "/".to_string(),
     };
 
