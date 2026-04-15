@@ -50,11 +50,10 @@ async fn get_auth_tokens(
 
     // Split the state into the cache key (UUID) and optional post-login redirect path.
     // Format: "<uuid>" or "<uuid>|<path>".
-    let (state_key, post_login_redirect) = match query.state.splitn(2, '|').collect::<Vec<_>>()[..]
-    {
-        [key, path] => (key.to_string(), Some(path.to_string())),
-        [key] => (key.to_string(), None),
-        _ => (query.state.clone(), None),
+    let (state_key, post_login_redirect) = if let Some((key, path)) = query.state.split_once('|') {
+        (key.to_string(), Some(path.to_string()))
+    } else {
+        (query.state.clone(), None)
     };
 
     let OAuthConfiguration {
