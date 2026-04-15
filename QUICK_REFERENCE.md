@@ -6,7 +6,7 @@ A quick reference guide for common tasks and API usage.
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.4.0"
+axum-oidc-client = "0.5"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -211,8 +211,15 @@ OAuthConfigurationBuilder::default()
     .with_post_logout_redirect_uri("http://localhost:8080")
     .with_custom_ca_cert("/path/to/ca.pem")
     .with_token_max_age(300)
+    // .with_token_request_redirect_uri(false)  // omit redirect_uri in token request (e.g. Okta)
     .build()?
 ```
+
+### Provider Compatibility
+
+| Setting | Default | When to change |
+|---------|---------|----------------|
+| `with_token_request_redirect_uri(bool)` | `true` | Set `false` if the provider returns `invalid_request` during token exchange because it rejects a redundant `redirect_uri` (e.g. Okta with a single registered redirect URI) |
 
 ## Route Handlers
 

@@ -1,6 +1,6 @@
 [package]
 name = "axum-oidc-client"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 description = "OpenID Connect (OIDC) and OAuth2 client middleware for Axum web framework"
@@ -10,7 +10,7 @@ repository = "https://github.com/RedSoftwareSystems/axum-oidc-client"
 
 [dependencies]
 tokio = { version = "1.41", features = ["full"] }
-reqwest = { version = "0.12.22", features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12.22", default-features = false, features = ["json"] }
 pkce-std = "0.2.1"
 serde_html_form = "0.2.7"
 axum-extra = { version = "0.10.0", features = [
@@ -34,6 +34,7 @@ moka = { version = "0.12.11", optional = true, features = ["future"]}
 chrono = {version = "0.4.42", features = ["serde"]}
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = { version = "0.1" }
+html-escape = { version = "0.2", optional = true }
 
 # sqlx is pulled in only when at least one sql-cache-* feature is enabled.
 # The runtime is always tokio; the database driver is selected per feature.
@@ -57,9 +58,16 @@ tempfile = "3"
 #
 # Both are in `default` so a plain `[dependencies] axum-oidc-client = "…"`
 # gives users the complete feature set without any extra configuration.
-default = ["authentication", "jwt", "moka-cache"]
+default = ["authentication", "jwt", "moka-cache", "reqwest-rustls-tls"]
 
-authentication = []
+authentication = ["dep:html-escape"]
+
+# ── reqwest TLS backends ──────────────────────────────────────────────────────
+# Exactly one should be enabled. `reqwest-rustls-tls` is the default.
+reqwest-rustls-tls          = ["reqwest/rustls-tls"]
+reqwest-native-tls          = ["reqwest/native-tls"]
+reqwest-native-tls-vendored = ["reqwest/native-tls-vendored"]
+
 jwt = ["dep:jsonwebtoken", "dep:base64"]
 
 # ── Moka in-process L1 cache ──────────────────────────────────────────────────
@@ -79,3 +87,6 @@ sql-cache-sqlite   = ["authentication", "dep:sqlx", "sqlx?/sqlite"]
 
 # Convenience feature that enables all three SQL backends at once (for tests).
 sql-cache-all = ["sql-cache-postgres", "sql-cache-mysql", "sql-cache-sqlite"]
+
+# Convenience feature that enables every feature in the crate.
+full = ["authentication", "jwt", "moka-cache", "redis", "redis-native-tls", "redis-rustls", "sql-cache-all", "reqwest-rustls-tls"]

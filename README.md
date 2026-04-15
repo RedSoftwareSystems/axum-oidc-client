@@ -2,7 +2,7 @@
 
 A comprehensive OAuth2/OIDC authentication library for Axum web applications with PKCE (Proof Key for Code Exchange) support and token auto refresh capabilities.
 
-[![Crates.io](https://img.shields.io/crates/v/axum-oidc-client.svg?version=0.3.0)](https://crates.io/crates/axum-oidc-client)
+[![Crates.io](https://img.shields.io/crates/v/axum-oidc-client.svg)](https://crates.io/crates/axum-oidc-client)
 [![Documentation](https://docs.rs/axum-oidc-client/badge.svg)](https://docs.rs/axum-oidc-client)
 [![License](https://img.shields.io/crates/l/axum-oidc-client.svg)](LICENSE)
 
@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.3.0"
+axum-oidc-client = "0.5"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -50,22 +50,22 @@ tokio = { version = "1", features = ["full"] }
 ```toml
 [dependencies]
 # Default: includes authentication, jwt, and moka-cache features
-axum-oidc-client = "0.3.0"
+axum-oidc-client = "0.5"
 
 # With JWT validation + Redis cache backend
-axum-oidc-client = { version = "0.3.0", features = ["jwt", "redis"] }
+axum-oidc-client = { version = "0.5", features = ["jwt", "redis"] }
 
 # With Redis + two-tier cache (L1 Moka + L2 Redis)
-axum-oidc-client = { version = "0.3.0", features = ["moka-cache", "redis"] }
+axum-oidc-client = { version = "0.5", features = ["moka-cache", "redis"] }
 
 # With PostgreSQL cache backend
-axum-oidc-client = { version = "0.3.0", features = ["sql-cache-postgres"] }
+axum-oidc-client = { version = "0.5", features = ["sql-cache-postgres"] }
 
 # With SQLite cache backend (great for development)
-axum-oidc-client = { version = "0.3.0", features = ["sql-cache-sqlite"] }
+axum-oidc-client = { version = "0.5", features = ["sql-cache-sqlite"] }
 
 # With Moka L1 + PostgreSQL L2 two-tier cache
-axum-oidc-client = { version = "0.3.0", features = ["moka-cache", "sql-cache-postgres"] }
+axum-oidc-client = { version = "0.5", features = ["moka-cache", "sql-cache-postgres"] }
 ```
 
 ## Quick Start
@@ -497,8 +497,15 @@ let config = OAuthConfigurationBuilder::default()
     .with_redirect_uri("http://localhost:8080/auth/callback")
     .with_private_cookie_key("secret-key-min-32-bytes-long")
     .with_scopes(vec!["openid", "email", "profile"])
+    // Optional: set false if your provider rejects redirect_uri in the token request
+    // .with_token_request_redirect_uri(false)
     .build()?;
 ```
+
+> **Provider compatibility note:** By default `redirect_uri` is included in the token exchange
+> request (RFC 6749 §4.1.3).  Call `.with_token_request_redirect_uri(false)` if your provider
+> rejects redundant `redirect_uri` parameters during token exchange (e.g. Okta when only one
+> redirect URI is registered).
 
 #### `auth_cache`
 
