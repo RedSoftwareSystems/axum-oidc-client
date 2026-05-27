@@ -13,14 +13,17 @@
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
-            "RUST_VERSION": "1"
+            "BASE_IMAGE": "mcr.microsoft.com/devcontainers/rust:1-trixie"
         },
-        "cacheFrom": "mcr.microsoft.com/devcontainers/rust:1-bookworm"
+        "cacheFrom": "mcr.microsoft.com/devcontainers/rust:1-trixie"
     },
     // ── Devcontainer features ─────────────────────────────────────────────────
     // Features are installed by the devcontainer CLI on top of the image,
     // independently of the Dockerfile, and are kept up to date automatically.
     "features": {
+        // Common utilities — declared explicitly so feature install order does not
+        // contain a pruned soft-dependency warning.
+        "ghcr.io/devcontainers/features/common-utils:2": {},
         // Node.js 22 LTS — installs node, npm, nvm inside the container.
         "ghcr.io/devcontainers/features/node:1": {
             "version": "22",
@@ -48,13 +51,9 @@
     ],
     // ── Mounts ────────────────────────────────────────────────────────────────
     "mounts": [
-        // Persist the Cargo registry and build cache across container rebuilds.
-        // This avoids re-downloading crates every time the image is rebuilt.
-        "source=oidc-client-cargo-registry,target=/home/vscode/.cargo/registry,type=volume",
-        "source=oidc-client-cargo-git,target=/home/vscode/.cargo/git,type=volume",
-        // Persist the compiled target directory so incremental builds survive
-        // container restarts without a full recompile.
-        "source=oidc-client-target,target=${containerWorkspaceFolder}/target,type=volume"
+      "source=${localEnv:SSH_AUTH_SOCK},target=/ssh-agent,type=bind",
+      "source=${localEnv:HOME}/.gitconfig,target=/home/vscode/.gitconfig,type=bind,readonly",
+      "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,readonly"
     ],
     // ── Non-root user ─────────────────────────────────────────────────────────
     // The base image creates a `vscode` user (UID 1000). Running as non-root
@@ -234,7 +233,7 @@
                     "pfx",
                     "handlebars",
                     "devcontainer",
-                    "bookworm"
+                    "trixie"
                 ]
             }
         }

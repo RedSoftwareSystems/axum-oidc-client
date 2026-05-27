@@ -1,6 +1,6 @@
 [package]
 name = "axum-oidc-client"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 description = "OpenID Connect (OIDC) and OAuth2 client middleware for Axum web framework"
@@ -9,31 +9,31 @@ homepage = "https://github.com/RedSoftwareSystems/axum-oidc-client"
 repository = "https://github.com/RedSoftwareSystems/axum-oidc-client"
 
 [dependencies]
-tokio = { version = "1.41", features = ["full"] }
+tokio = { version = "1.41" }
 reqwest = { version = "0.12.22", default-features = false, features = ["json"] }
-pkce-std = "0.2.1"
+pkce-std = { version = "0.2.1", optional = true }
 serde_html_form = "0.2.7"
-axum-extra = { version = "0.10.0", features = [
+axum-extra = { version = "0.10.0", optional = true, features = [
     "cookie",
     "cookie-private",
     "cookie-signed",
 ] }
-axum = { version = "0.8.6", features = ["macros"] }
+axum = { version = "0.8.6", optional = true, features = ["macros"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.140" }
-rand = { version = "0.9.1" }
-http = { version = "1.2.0" }
+rand = { version = "0.9.1", optional = true}
+http = { version = "1.2.0", optional = true }
 futures-util = { version = "0.3.31" }
-tower = { version = "0.5.2" }
+tower = { version = "0.5.2", optional = true }
 
 urlencoding = "2.1"
-uuid = { version = "1.18.1", features = ["v4"] }
-time = "0.3.44"
+uuid = { version = "1.18.1", optional = true, features = ["v4"] }
+time = { version = "0.3.44", optional = true}
 redis = { version = "1.0.0-rc.3", optional = true, features = ["tokio-comp", "connection-manager"]}
 moka = { version = "0.12.11", optional = true, features = ["future"]}
-chrono = {version = "0.4.42", features = ["serde"]}
+chrono = {version = "0.4.42", optional = true, features = ["serde"]}
 tokio-util = { version = "0.7", features = ["rt"] }
-tracing = { version = "0.1" }
+tracing = { version = "0.1", optional = true}
 html-escape = { version = "0.2", optional = true }
 
 # sqlx is pulled in only when at least one sql-cache-* feature is enabled.
@@ -43,6 +43,9 @@ sqlx = { version = "0.8", optional = true, features = ["runtime-tokio", "chrono"
 # jsonwebtoken and base64 are pulled in only when the `jwt` feature is enabled.
 jsonwebtoken = { version = "10.3", optional = true, features = ["rust_crypto"] }
 base64 = { version = "0.22", optional = true }
+
+# getrandom is pulled in only when the `wasm` feature is enabled.
+getrandom = { version = "0.2", optional = true }
 
 [dev-dependencies]
 mockito = "1"
@@ -58,7 +61,9 @@ tempfile = "3"
 #
 # Both are in `default` so a plain `[dependencies] axum-oidc-client = "…"`
 # gives users the complete feature set without any extra configuration.
-default = ["authentication", "jwt", "moka-cache", "reqwest-rustls-tls"]
+default = ["server", "authentication", "jwt", "moka-cache", "reqwest-rustls-tls"]
+
+server = ["axum", "axum-extra", "rand", "chrono", "pkce-std", "time", "uuid", "http", "tower", "tracing", "tokio/full"]
 
 authentication = ["dep:html-escape"]
 
@@ -87,6 +92,12 @@ sql-cache-sqlite   = ["authentication", "dep:sqlx", "sqlx?/sqlite"]
 
 # Convenience feature that enables all three SQL backends at once (for tests).
 sql-cache-all = ["sql-cache-postgres", "sql-cache-mysql", "sql-cache-sqlite"]
+
+# ── WASM support ─────────────────────────────────────────────────────────────
+# Enables the JS-backed random source required by getrandom on wasm32 targets,
+# plus JWT support.  Select this feature instead of `default` when targeting
+# wasm32-unknown-unknown.
+wasm = ["getrandom/js", "jwt"]
 
 # Convenience feature that enables every feature in the crate.
 full = ["authentication", "jwt", "moka-cache", "redis", "redis-native-tls", "redis-rustls", "sql-cache-all", "reqwest-rustls-tls"]

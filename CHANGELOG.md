@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-26
+
+### Added
+
+- **`server` feature** *(default)*: new top-level feature that bundles all Axum/server-side dependencies — `axum`, `axum-extra`, `pkce-std`, `rand`, `chrono`, `time`, `uuid`, `http`, `tower`, `tracing`, and `tokio/full`. Previously these were unconditionally compiled; they are now gated behind this feature so WASM and library-only consumers can opt out.
+
+- **`wasm` feature**: enables JS-backed random source (`getrandom/js`) and `jwt` support. Select this feature instead of `default` when targeting `wasm32-unknown-unknown`. The `server` feature must not be enabled alongside `wasm`.
+
+- **reqwest TLS backend features**: explicit TLS selection for reqwest. Exactly one should be enabled:
+  - `reqwest-rustls-tls` *(default)* — rustls TLS (was previously implicit)
+  - `reqwest-native-tls` — system native-tls
+  - `reqwest-native-tls-vendored` — vendored native-tls
+
+### Changed
+
+- **`default` feature set** updated from `["authentication", "jwt", "moka-cache"]` to `["server", "authentication", "jwt", "moka-cache", "reqwest-rustls-tls"]`. Existing server applications are unaffected; the new `server` and `reqwest-rustls-tls` gates were previously always-on.
+
+- **`full` feature** now explicitly includes `reqwest-rustls-tls`.
+
 ## [0.5.0] - 2026-04-15
 
 ### Added

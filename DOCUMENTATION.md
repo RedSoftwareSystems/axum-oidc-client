@@ -1,4 +1,4 @@
-# axum-oidc-client API Documentation (v0.5.0)
+# axum-oidc-client API Documentation (v0.6.0)
 
 Complete API documentation and usage guide for the axum-oidc-client library.
 
@@ -30,8 +30,17 @@ Complete API documentation and usage guide for the axum-oidc-client library.
 
 | Flag | Default | Description |
 |---|---|---|
+| `server` | ✅ | Bundles Axum, axum-extra, PKCE (`pkce-std`), `tower`, `tracing`, and `tokio/full`. Required for running as an HTTP server. Omit when targeting WASM. |
 | `authentication` | ✅ | Full OAuth2/OIDC stack (session management, cache, extractors, logout). Implied by every cache feature. |
 | `jwt` | ✅ | JWT validation via `JwtLayer`, `OidcClaims`, `JwtConfiguration`, `JwtConfigurationBuilder`. |
+
+### reqwest TLS backends (exactly one should be enabled)
+
+| Flag | Default | Description |
+|---|---|---|
+| `reqwest-rustls-tls` | ✅ | rustls TLS for reqwest (recommended). |
+| `reqwest-native-tls` | ❌ | System native-tls for reqwest. |
+| `reqwest-native-tls-vendored` | ❌ | Vendored native-tls for reqwest. |
 
 ### Cache backends (each implies `authentication`)
 
@@ -45,6 +54,12 @@ Complete API documentation and usage guide for the axum-oidc-client library.
 | `sql-cache-mysql` | ❌ | MySQL/MariaDB SQL cache backend. |
 | `sql-cache-sqlite` | ❌ | SQLite SQL cache backend. |
 | `sql-cache-all` | ❌ | All three SQL cache backends. |
+
+### WASM target
+
+| Flag | Default | Description |
+|---|---|---|
+| `wasm` | ❌ | Enables JS-backed random source (`getrandom/js`) and JWT support. Use instead of `default` when targeting `wasm32-unknown-unknown`. The `server` feature must **not** be enabled alongside `wasm`. |
 
 ## Core Concepts
 
@@ -309,11 +324,16 @@ let cache: Arc<dyn AuthCache + Send + Sync> = Arc::new(
 
 **Cache-aside behaviour:**
 
-| Operation  | L1 (Moka)                         | L2 (backend)                   |
-|------------|-----------------------------------|--------------------------------|
-| Read       | Check first; on miss, read L2     | Read on L1 miss; populate L1   |
-| Write      | Write                             | Write                          |
-| Invalidate | Remove                            | Remove                         |
+| Operation  | L1 (Moka)                         | L2 (backend)                            |
+|------------|-----------------------------------|-----------------------------------------|
+| Read       | Check first; on miss, read L2     | Read on L1 miss (auth sessions only)    |
+| Write (auth session) | Write                   | Write (source of truth)                 |
+| Write (code verifier) | Write (L1-only)        | **Not written** – PKCE verifiers are ephemeral |
+| Invalidate | Remove                            | Remove                                  |
+
+> **Note:** PKCE code verifiers are short-lived, single-use values. When L1
+> (Moka) is present they are stored exclusively in L1 to avoid unnecessary
+> round-trips to the L2 backend. In L2-only mode they are stored in L2.
 
 #### `TwoTierCacheConfig`
 

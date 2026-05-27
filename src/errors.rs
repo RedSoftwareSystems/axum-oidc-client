@@ -1,5 +1,7 @@
-use axum::response::IntoResponse;
 use std::fmt;
+
+#[cfg(feature = "server")]
+use axum::response::IntoResponse;
 
 #[cfg(feature = "redis")]
 use redis::RedisError;
@@ -37,6 +39,7 @@ pub enum Error {
     TokenRefreshFailedAuth(String),
 }
 
+#[cfg(feature = "server")]
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {
@@ -136,6 +139,7 @@ impl IntoResponse for Error {
     }
 }
 
+#[cfg(feature = "server")]
 impl Error {
     /// Convert HTTP status code and response text to appropriate Error variant
     pub fn from_status_code(status: axum::http::StatusCode, response_text: String) -> Self {

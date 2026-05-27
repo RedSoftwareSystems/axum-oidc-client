@@ -1,12 +1,12 @@
 # ── Oxigate devcontainer ─────────────────────────────────────────────────────
-# Base: Microsoft's official Rust devcontainer image on Debian 12 Bookworm.
+# Base: Microsoft's official Rust devcontainer image on Debian Trixie.
 # Provides: rustup, cargo, rust-analyzer, git, common dev utilities.
 #
 # Node.js and Docker CLI are installed via devcontainer features (see
 # devcontainer.json) rather than here, so this Dockerfile only handles
 # Rust-specific tooling and system packages.
-ARG RUST_VERSION=1
-FROM mcr.microsoft.com/devcontainers/rust:${RUST_VERSION}-bookworm
+ARG BASE_IMAGE=mcr.microsoft.com/devcontainers/rust:1-trixie
+FROM ${BASE_IMAGE}
 
 # ── System packages ───────────────────────────────────────────────────────────
 # Install in a single layer to minimise image size.
