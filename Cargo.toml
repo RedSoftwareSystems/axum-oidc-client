@@ -65,7 +65,7 @@ default = ["server", "authentication", "jwt", "moka-cache", "reqwest-rustls-tls"
 
 server = ["axum", "axum-extra", "rand", "chrono", "pkce-std", "time", "uuid", "http", "tower", "tracing", "tokio/full"]
 
-authentication = ["dep:html-escape"]
+authentication = ["server", "dep:html-escape"]
 
 # ── reqwest TLS backends ──────────────────────────────────────────────────────
 # Exactly one should be enabled. `reqwest-rustls-tls` is the default.
@@ -99,5 +99,6 @@ sql-cache-all = ["sql-cache-postgres", "sql-cache-mysql", "sql-cache-sqlite"]
 # wasm32-unknown-unknown.
 wasm = ["getrandom/js", "jwt"]
 
-# Convenience feature that enables every feature in the crate.
-full = ["authentication", "jwt", "moka-cache", "redis", "redis-native-tls", "redis-rustls", "sql-cache-all", "reqwest-rustls-tls"]
+# Convenience feature that enables all compatible production features in the crate.
+# Rustls is selected for Redis because `redis-native-tls` and `redis-rustls` are mutually exclusive.
+full = ["server", "authentication", "jwt", "moka-cache", "redis", "redis-rustls", "sql-cache-all", "reqwest-rustls-tls"]

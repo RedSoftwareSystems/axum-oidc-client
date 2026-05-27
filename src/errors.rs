@@ -6,6 +6,7 @@ use axum::response::IntoResponse;
 #[cfg(feature = "redis")]
 use redis::RedisError;
 
+#[cfg(feature = "server")]
 #[derive(Debug)]
 pub enum Error {
     MissingCodeVerifier,
@@ -37,6 +38,20 @@ pub enum Error {
     CacheAccessError(String),
     SessionUpdateFailed(String),
     TokenRefreshFailedAuth(String),
+}
+
+#[cfg(not(feature = "server"))]
+#[derive(Debug)]
+pub enum Error {
+    MissingCodeVerifier,
+    MissingPatameter(String),
+    NotValidUri(String),
+    Request(reqwest::Error),
+    InvalidCodeResponse(serde_html_form::de::Error),
+    InvalidTokenResponse(serde_json::Error),
+    InvalidResponse(String),
+    CacheError(String),
+    TokenRefreshFailed(String),
 }
 
 #[cfg(feature = "server")]
@@ -159,6 +174,7 @@ impl Error {
     }
 }
 
+#[cfg(feature = "server")]
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -188,6 +204,23 @@ impl fmt::Display for Error {
             Error::CacheAccessError(m) => write!(f, "Cache error: {m}"),
             Error::SessionUpdateFailed(m) => write!(f, "Failed to update session in cache: {m}"),
             Error::TokenRefreshFailedAuth(m) => write!(f, "Token expired and refresh failed: {m}"),
+        }
+    }
+}
+
+#[cfg(not(feature = "server"))]
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::MissingCodeVerifier => write!(f, "Missing code verifier"),
+            Error::MissingPatameter(p) => write!(f, "Missing parameter: {p}"),
+            Error::NotValidUri(u) => write!(f, "Not a valid URI: {u}"),
+            Error::Request(e) => write!(f, "Reqwest error: {e}"),
+            Error::InvalidCodeResponse(e) => write!(f, "Invalid code response: {e}"),
+            Error::InvalidTokenResponse(e) => write!(f, "Invalid token response: {e}"),
+            Error::InvalidResponse(r) => write!(f, "Invalid response: {r}"),
+            Error::CacheError(e) => write!(f, "Cache error: {e}"),
+            Error::TokenRefreshFailed(e) => write!(f, "Token refresh failed: {e}"),
         }
     }
 }

@@ -1,12 +1,12 @@
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::{
-    cookie::{Cookie, Key},
     PrivateCookieJar,
+    cookie::{Cookie, Key},
 };
 use futures_util::future::BoxFuture;
 use time::Duration;
 
-use crate::authentication::{cache::AuthCache, OAuthConfiguration, SESSION_KEY};
+use crate::authentication::{OAuthConfiguration, SESSION_KEY, cache::AuthCache};
 
 use std::sync::Arc;
 

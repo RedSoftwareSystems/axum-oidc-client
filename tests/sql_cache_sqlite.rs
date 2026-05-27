@@ -119,11 +119,13 @@ async fn invalidate_code_verifier_removes_entry() {
         .expect("set_code_verifier failed");
 
     // Confirm it exists.
-    assert!(cache
-        .get_code_verifier("state-del")
-        .await
-        .unwrap()
-        .is_some());
+    assert!(
+        cache
+            .get_code_verifier("state-del")
+            .await
+            .unwrap()
+            .is_some()
+    );
 
     cache
         .invalidate_code_verifier("state-del")
@@ -517,7 +519,7 @@ async fn new_returns_error_for_unrecognised_scheme() {
 
 #[tokio::test]
 async fn two_tier_cache_with_sqlite_l2() {
-    use axum_oidc_client::cache::{config::TwoTierCacheConfig, TwoTierAuthCache};
+    use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
 
     let sql_cache = Arc::new(make_cache().await);
 
@@ -578,7 +580,7 @@ async fn two_tier_cache_with_sqlite_l2() {
 
 #[tokio::test]
 async fn two_tier_code_verifier_stored_only_in_l1() {
-    use axum_oidc_client::cache::{config::TwoTierCacheConfig, TwoTierAuthCache};
+    use axum_oidc_client::cache::{TwoTierAuthCache, config::TwoTierCacheConfig};
 
     let sql_cache = Arc::new(make_cache().await);
     let sql_cache_ref = Arc::clone(&sql_cache);
