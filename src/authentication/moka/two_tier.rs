@@ -204,14 +204,14 @@ impl TwoTierAuthCache {
 impl AuthCache for TwoTierAuthCache {
     // ── code_verifier ─────────────────────────────────────────────────────────
     //
-    // Code verifiers use the same cache-aside pattern as auth sessions.
-    // In two-tier mode L2 is the source of truth (written first), and L1 acts
-    // as a read-through cache that is populated on an L2 hit.  This ensures
-    // correctness in multi-process deployments where the PKCE callback may
-    // arrive at a different instance than the one that started the flow.
+    // Code verifiers are short-lived, single-use PKCE values created during
+    // the authorization request and consumed immediately at the token endpoint.
+    // Because they are ephemeral and process-local, they are stored exclusively
+    // in L1 (Moka) when L1 is present — persisting them to an L2 backend
+    // (Redis, SQL) would add unnecessary I/O with no correctness benefit.
     //
     // In L1-only mode L2 is absent and Moka is used directly.
-    // In L2-only mode L1 is absent and all operations are delegated to L2.
+    // In L2-only mode (no L1) all operations are delegated to L2.
 
     fn get_code_verifier(
         &self,
@@ -246,14 +246,13 @@ impl AuthCache for TwoTierAuthCache {
         let key = cv_key(challenge_state);
         let value = code_verifier.to_string();
         Box::pin(async move {
-            // Write to L2 first (source of truth when present)
-            if let Some(l2) = &self.l2 {
-                l2.set_code_verifier(key_tail(&key), &value).await?;
-            }
-
-            // Write to L1
+            // Code verifiers are L1-only when L1 is present: they are
+            // ephemeral, single-use values that do not need to be persisted
+            // to a shared L2 backend.  Fall back to L2 only in L2-only mode.
             if let Some(l1) = &self.l1 {
                 l1.insert(key, L1Entry::CodeVerifier(value)).await;
+            } else if let Some(l2) = &self.l2 {
+                l2.set_code_verifier(key_tail(&key), &value).await?;
             }
 
             Ok(())
@@ -632,11 +631,11 @@ mod tests {
             cache.get_code_verifier("s1").await.unwrap(),
             Some("v1".to_string())
         );
-        // L2 must also have been written to (write-through)
+        // Code verifiers are L1-only when L1 is present; L2 must NOT be written.
         assert_eq!(
             stub.get_code_verifier("s1").await.unwrap(),
-            Some("v1".to_string()),
-            "code verifier must be written to L2 in two-tier mode"
+            None,
+            "code verifier must NOT be written to L2 when L1 is present"
         );
     }
 

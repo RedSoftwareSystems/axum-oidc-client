@@ -72,6 +72,19 @@ pub fn build_http_client(custom_ca_cert: Option<&str>) -> Result<Client, Error> 
                     "Failed to read custom CA certificate from '{path}': {e}"
                 ))
             })?;
+
+            // reqwest's rustls backend defers PEM validation to connection
+            // time, so Certificate::from_pem always succeeds regardless of
+            // content.  Validate eagerly here: a valid PEM certificate file
+            // must contain at least one "-----BEGIN CERTIFICATE-----" block.
+            let pem_text = std::str::from_utf8(&pem).unwrap_or("");
+            if !pem_text.contains("-----BEGIN CERTIFICATE-----") {
+                return Err(Error::InvalidResponse(format!(
+                    "Failed to parse custom CA certificate from '{path}': \
+                     no PEM certificate block found"
+                )));
+            }
+
             let cert = reqwest::Certificate::from_pem(&pem).map_err(|e| {
                 Error::InvalidResponse(format!(
                     "Failed to parse custom CA certificate from '{path}': {e}"
@@ -116,8 +129,11 @@ mod tests {
 
     #[test]
     fn test_build_http_client_invalid_pem() {
-        // Write a temp file with invalid PEM content and verify the parse
-        // error is returned correctly.
+        // Write a temp file with plain text content (no PEM headers).
+        // The early validation in build_http_client detects the missing
+        // "-----BEGIN CERTIFICATE-----" block and returns an error before
+        // handing the bytes to reqwest (whose rustls backend would otherwise
+        // defer validation to connection time and succeed here).
         use std::io::Write;
         let mut tmp = tempfile::NamedTempFile::new().expect("tempfile");
         tmp.write_all(b"not a valid pem certificate")

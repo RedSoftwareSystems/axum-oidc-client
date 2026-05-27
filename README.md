@@ -33,8 +33,15 @@ tokio = { version = "1", features = ["full"] }
 
 #### Top-level (default)
 
-- `authentication` *(default)* – The full OAuth2/OIDC stack: `AuthenticationLayer`, session management, `AuthCache`, `OAuthConfigurationBuilder`, route handlers, extractors, and logout handlers.  Implied by every cache/backend feature.
+- `server` *(default)* – Bundles Axum, axum-extra, PKCE, tower, tracing, and tokio/full. Required for running as an HTTP server. Not needed for WASM targets.
+- `authentication` *(default)* – The full OAuth2/OIDC stack: `AuthenticationLayer`, session management, `AuthCache`, `OAuthConfigurationBuilder`, route handlers, extractors, and logout handlers. Implied by every cache/backend feature.
 - `jwt` *(default)* – JWT validation utilities: `JwtLayer`, `OidcClaims`, `JwtConfiguration`, `JwtConfigurationBuilder`, `JwtClaims`, `OptionalJwtClaims`.
+
+#### reqwest TLS backends (exactly one should be enabled)
+
+- `reqwest-rustls-tls` *(default)* – rustls TLS backend for reqwest.
+- `reqwest-native-tls` – native-tls backend for reqwest.
+- `reqwest-native-tls-vendored` – native-tls backend for reqwest (vendored OpenSSL).
 
 #### Cache backends (each implies `authentication`)
 
@@ -47,25 +54,32 @@ tokio = { version = "1", features = ["full"] }
 - `sql-cache-sqlite` – SQLite backend via sqlx
 - `sql-cache-all` – All three SQL backends at once (useful for testing)
 
+#### WASM
+
+- `wasm` – JS-backed random source + JWT. Use instead of `default` when targeting `wasm32-unknown-unknown`.
+
 ```toml
 [dependencies]
-# Default: includes authentication, jwt, and moka-cache features
-axum-oidc-client = "0.5"
+# Default: includes server, authentication, jwt, moka-cache, and reqwest-rustls-tls features
+axum-oidc-client = "0.6"
 
 # With JWT validation + Redis cache backend
-axum-oidc-client = { version = "0.5", features = ["jwt", "redis"] }
+axum-oidc-client = { version = "0.6", features = ["jwt", "redis"] }
 
 # With Redis + two-tier cache (L1 Moka + L2 Redis)
-axum-oidc-client = { version = "0.5", features = ["moka-cache", "redis"] }
+axum-oidc-client = { version = "0.6", features = ["moka-cache", "redis"] }
 
 # With PostgreSQL cache backend
-axum-oidc-client = { version = "0.5", features = ["sql-cache-postgres"] }
+axum-oidc-client = { version = "0.6", features = ["sql-cache-postgres"] }
 
 # With SQLite cache backend (great for development)
-axum-oidc-client = { version = "0.5", features = ["sql-cache-sqlite"] }
+axum-oidc-client = { version = "0.6", features = ["sql-cache-sqlite"] }
 
 # With Moka L1 + PostgreSQL L2 two-tier cache
-axum-oidc-client = { version = "0.5", features = ["moka-cache", "sql-cache-postgres"] }
+axum-oidc-client = { version = "0.6", features = ["moka-cache", "sql-cache-postgres"] }
+
+# WASM target (wasm32-unknown-unknown): disable defaults, enable wasm feature
+axum-oidc-client = { version = "0.6", default-features = false, features = ["wasm"] }
 ```
 
 ## Quick Start

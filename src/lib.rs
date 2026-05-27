@@ -116,9 +116,17 @@
 //!
 //! ### Top-level (default)
 //!
+//! - `server` *(default)* – Bundles Axum, axum-extra, PKCE, `tower`, `tracing`, and `tokio/full`.
+//!   Required for running as an HTTP server. Omit when targeting WASM.
 //! - `authentication` *(default)* – OAuth2/OIDC middleware, session management, cache trait,
 //!   builder, router, extractors, and logout handlers.  Implied by every cache/backend feature.
 //! - `jwt` *(default)* – JWT validation and inspection utilities.
+//!
+//! ### reqwest TLS backends (exactly one should be enabled)
+//!
+//! - `reqwest-rustls-tls` *(default)* – rustls TLS for reqwest (recommended)
+//! - `reqwest-native-tls` – system native-tls for reqwest
+//! - `reqwest-native-tls-vendored` – vendored native-tls for reqwest
 //!
 //! ### Cache backends (each implies `authentication`)
 //!
@@ -131,11 +139,18 @@
 //! - `sql-cache-sqlite` – SQLite backend via sqlx
 //! - `sql-cache-all` – all three SQL backends at once (useful for testing)
 //!
+//! ### WASM target
+//!
+//! - `wasm` – JS-backed random source (`getrandom/js`) + `jwt`. Use instead of `default`
+//!   when targeting `wasm32-unknown-unknown`. Do not combine with `server`.
+//!
 //! ## Examples
 //!
 //! See the `examples` directory for a complete working examples.
 
 pub mod errors;
+
+#[cfg(feature = "server")]
 pub mod http_client;
 
 // ── authentication feature ────────────────────────────────────────────────────

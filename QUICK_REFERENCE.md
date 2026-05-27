@@ -6,7 +6,7 @@ A quick reference guide for common tasks and API usage.
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.5"
+axum-oidc-client = "0.6"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -900,27 +900,35 @@ async fn test_refresh(session: AuthSession) -> String {
 
 | Feature | Default | Description |
 |---------|---------|-------------|
+| `server` | ✅ yes | Bundles Axum, axum-extra, PKCE, `tower`, `tracing`, `tokio/full`. Required for HTTP servers. Omit for WASM targets. |
 | `authentication` | ✅ yes | Core OAuth2/OIDC authentication layer (`AuthenticationLayer`, `AuthSession`, extractors) |
 | `jwt` | ✅ yes | Standalone JWT Bearer token validation (`JwtLayer`, `JwtClaims`, `OptionalJwtClaims`) |
+| `reqwest-rustls-tls` | ✅ yes | rustls TLS backend for reqwest (default TLS). |
+| `reqwest-native-tls` | ❌ no | System native-tls backend for reqwest. |
+| `reqwest-native-tls-vendored` | ❌ no | Vendored native-tls backend for reqwest. |
 | `moka-cache` | ✅ yes | In-memory L1 cache backed by Moka (`TwoTierAuthCache`) |
 | `redis` | ❌ no | Redis L2 cache backend |
 | `sql-cache-sqlite` | ❌ no | SQLite L2 cache backend (via SQLx) |
 | `sql-cache-postgres` | ❌ no | PostgreSQL L2 cache backend (via SQLx) |
 | `sql-cache-mysql` | ❌ no | MySQL/MariaDB L2 cache backend (via SQLx) |
 | `sql-cache-all` | ❌ no | All SQL backends (useful for testing) |
+| `wasm` | ❌ no | JS-backed random source + JWT. Use instead of `default` for `wasm32-unknown-unknown` targets. |
 
 ```toml
-# Default features (authentication + jwt + moka-cache)
-axum-oidc-client = "0.4.0"
+# Default features (server + authentication + jwt + moka-cache + reqwest-rustls-tls)
+axum-oidc-client = "0.6"
 
 # Add Redis support
-axum-oidc-client = { version = "0.4.0", features = ["redis"] }
+axum-oidc-client = { version = "0.6", features = ["redis"] }
 
 # JWT only (no OAuth2 session layer)
-axum-oidc-client = { version = "0.4.0", default-features = false, features = ["jwt"] }
+axum-oidc-client = { version = "0.6", default-features = false, features = ["jwt", "reqwest-rustls-tls"] }
 
 # Authentication only (no JWT layer)
-axum-oidc-client = { version = "0.4.0", default-features = false, features = ["authentication", "moka-cache"] }
+axum-oidc-client = { version = "0.6", default-features = false, features = ["server", "authentication", "moka-cache", "reqwest-rustls-tls"] }
+
+# WASM target (no server feature)
+axum-oidc-client = { version = "0.6", default-features = false, features = ["wasm", "reqwest-rustls-tls"] }
 ```
 
 ## Testing
@@ -958,5 +966,5 @@ openssl rand -hex 32
 
 ---
 
-**Version:** 0.4.0  
-**Last Updated:** 2026-03-04
+**Version:** 0.6.0  
+**Last Updated:** 2026-05-26
