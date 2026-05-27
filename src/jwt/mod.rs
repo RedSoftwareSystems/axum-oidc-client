@@ -13,8 +13,8 @@ pub use oidc::OidcClaims;
 // ── Re-exports from jwt_decoder ───────────────────────────────────────────────
 
 pub use jwt_decoder::{
-    decode_jwt, decode_jwt_unverified, Algorithm, DecodingKey, EncodingKey, Header, TokenData,
-    Validation,
+    Algorithm, DecodingKey, EncodingKey, Header, TokenData, Validation, decode_jwt,
+    decode_jwt_unverified,
 };
 
 // ── Re-exports from configuration ─────────────────────────────────────────────

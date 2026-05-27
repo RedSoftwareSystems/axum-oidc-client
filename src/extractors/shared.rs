@@ -1,4 +1,4 @@
-use axum::http::{request::Parts, StatusCode};
+use axum::http::{StatusCode, request::Parts};
 use axum_extra::extract::PrivateCookieJar;
 use chrono::Local;
 use reqwest::Client;
@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use crate::{
     authentication::{
-        cache::AuthCache, calculate_token_expiration, session::AuthSession, OAuthConfiguration,
-        SESSION_KEY,
+        OAuthConfiguration, SESSION_KEY, cache::AuthCache, calculate_token_expiration,
+        session::AuthSession,
     },
     errors::Error,
 };

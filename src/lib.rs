@@ -148,6 +148,11 @@
 //!
 //! See the `examples` directory for a complete working examples.
 
+#[cfg(all(feature = "server", feature = "wasm"))]
+compile_error!(
+    "features `server` and `wasm` are mutually exclusive; use `server` for native Axum apps or `wasm` for wasm32 targets"
+);
+
 pub mod errors;
 
 #[cfg(feature = "server")]

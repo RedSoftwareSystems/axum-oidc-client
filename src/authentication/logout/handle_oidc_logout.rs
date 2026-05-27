@@ -1,12 +1,12 @@
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum_extra::extract::{cookie::Cookie, PrivateCookieJar};
+use axum_extra::extract::{PrivateCookieJar, cookie::Cookie};
 use futures_util::future::BoxFuture;
 use http::request::Parts;
 use std::sync::Arc;
 use urlencoding::encode;
 
 use crate::{
-    authentication::{cache::AuthCache, LogoutHandler, OAuthConfiguration, SESSION_KEY},
+    authentication::{LogoutHandler, OAuthConfiguration, SESSION_KEY, cache::AuthCache},
     errors::Error,
 };
 
