@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.5"
+axum-oidc-client = "0.6"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -56,7 +56,7 @@ tokio = { version = "1", features = ["full"] }
 
 #### WASM
 
-- `wasm` – JS-backed random source + JWT. Use instead of `default` when targeting `wasm32-unknown-unknown`.
+- `wasm` – JWT support without server-side Axum dependencies. Use instead of `default` when targeting `wasm32-unknown-unknown`. Configure any required `getrandom` backend in your final application.
 
 ```toml
 [dependencies]

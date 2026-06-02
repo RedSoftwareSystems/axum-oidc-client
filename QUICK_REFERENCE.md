@@ -402,9 +402,9 @@ Requires one of the `sql-cache-*` feature flags. An alternative L2 backend to Re
 
 ```toml
 # Choose one (or use sql-cache-all for testing):
-axum-oidc-client = { version = "0.4.0", features = ["sql-cache-sqlite"] }
-axum-oidc-client = { version = "0.4.0", features = ["sql-cache-postgres"] }
-axum-oidc-client = { version = "0.4.0", features = ["sql-cache-mysql"] }
+axum-oidc-client = { version = "0.6", features = ["sql-cache-sqlite"] }
+axum-oidc-client = { version = "0.6", features = ["sql-cache-postgres"] }
+axum-oidc-client = { version = "0.6", features = ["sql-cache-mysql"] }
 ```
 
 ```rust
@@ -912,7 +912,7 @@ async fn test_refresh(session: AuthSession) -> String {
 | `sql-cache-postgres` | ❌ no | PostgreSQL L2 cache backend (via SQLx) |
 | `sql-cache-mysql` | ❌ no | MySQL/MariaDB L2 cache backend (via SQLx) |
 | `sql-cache-all` | ❌ no | All SQL backends (useful for testing) |
-| `wasm` | ❌ no | JS-backed random source + JWT. Use instead of `default` for `wasm32-unknown-unknown` targets. |
+| `wasm` | ❌ no | JWT support without server-side Axum dependencies. Use instead of `default` for `wasm32-unknown-unknown` targets; configure any required `getrandom` backend in your final application. |
 
 ```toml
 # Default features (server + authentication + jwt + moka-cache + reqwest-rustls-tls)

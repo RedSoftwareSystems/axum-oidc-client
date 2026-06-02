@@ -53,19 +53,8 @@ use crate::errors::Error;
 ///
 /// # Examples
 ///
-/// ```rust,no_run
-/// use axum_oidc_client::http_client::build_http_client;
-///
-/// # fn example() -> Result<(), axum_oidc_client::errors::Error> {
-/// // Default client — trusts the system root store.
-/// let client = build_http_client(None)?;
-///
-/// // Client that also trusts a private CA.
-/// let client = build_http_client(Some("/etc/ssl/my-corp-ca.pem"))?;
-/// # Ok(())
-/// # }
-/// ```
-pub fn build_http_client(custom_ca_cert: Option<&str>) -> Result<Client, Error> {
+/// This is an internal helper used by authentication and JWT discovery flows.
+pub(crate) fn build_http_client(custom_ca_cert: Option<&str>) -> Result<Client, Error> {
     let builder = match custom_ca_cert {
         Some(path) => {
             #[cfg(not(any(

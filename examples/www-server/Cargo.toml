@@ -61,8 +61,8 @@ cache-l1-sqlite = ["cache-l1", "cache-sqlite"]
 default = ["cache-l1"]
 
 [dependencies]
-axum = "0.8.4"
-axum-extra = { version = "0.10.0", features = [
+axum = "0.8"
+axum-extra = { version = "0.12", features = [
     "cookie",
     "cookie-private",
     "cookie-signed",
@@ -78,9 +78,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # Cache features are activated transitively through this crate's own features
 # (see the [features] section above); do NOT hard-code them here.
 axum-oidc-client = { path = "../.." }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-clap = { version = "4.5.51", features = ["derive", "env"] }
-clap_derive = "4.5.49"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
+clap = { version = "4", features = ["derive", "env"] }
+clap_derive = "4"
 dotenv = "0.15"
-base64 = "0.21"
-jsonwebtoken = "10.3.0"
+base64 = "0.22"
+jsonwebtoken = "10"

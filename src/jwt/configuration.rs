@@ -254,7 +254,7 @@ where
                 .get(uri)
                 .send()
                 .await
-                .map_err(Error::Request)?
+                .map_err(Error::from_request_error)?
                 .error_for_status()
                 .map_err(|e| {
                     Error::InvalidResponse(format!("JWKS refresh request to {uri} failed: {e}"))
@@ -407,7 +407,7 @@ impl<C: DeserializeOwned> JwtConfigurationBuilder<C> {
             .get(&discovery_url)
             .send()
             .await
-            .map_err(Error::Request)?
+            .map_err(Error::from_request_error)?
             .error_for_status()
             .map_err(|e| {
                 Error::InvalidResponse(format!(
@@ -443,7 +443,7 @@ impl<C: DeserializeOwned> JwtConfigurationBuilder<C> {
             .get(jwks_uri)
             .send()
             .await
-            .map_err(Error::Request)?
+            .map_err(Error::from_request_error)?
             .error_for_status()
             .map_err(|e| Error::InvalidResponse(format!("JWKS request to {jwks_uri} failed: {e}")))?
             .json()

@@ -56,11 +56,15 @@ pub async fn refresh_tokens(
             },
         )
         .send()
-        .await?;
+        .await
+        .map_err(Error::from_request_error)?;
 
     match res.status() {
         StatusCode::OK => {
-            let refresh_response = res.json::<RefreshTokenResponse>().await?;
+            let refresh_response = res
+                .json::<RefreshTokenResponse>()
+                .await
+                .map_err(Error::from_request_error)?;
             Ok(refresh_response)
         }
         status => {
@@ -82,7 +86,7 @@ pub async fn extract_and_refresh_session(
         .get_auth_session(session_id)
         .await
         .map_err(|err| Error::CacheAccessError(format!("{err:?}")))?
-        .ok_or_else(|| Error::SessionExpired)?;
+        .ok_or(Error::SessionExpired)?;
 
     // Check if the token is expired
     let now = Local::now();
@@ -154,13 +158,13 @@ pub async fn extract_auth_session(parts: &mut Parts) -> Result<AuthSession, Erro
     let headers = parts.headers.clone();
 
     // Check cache
-    let cache = cache.ok_or_else(|| Error::AuthCacheNotConfigured)?;
+    let cache = cache.ok_or(Error::AuthCacheNotConfigured)?;
 
     // Check config
-    let config = config.ok_or_else(|| Error::OAuthConfigNotConfigured)?;
+    let config = config.ok_or(Error::OAuthConfigNotConfigured)?;
 
     // Check client
-    let client = client.ok_or_else(|| Error::HttpClientNotConfigured)?;
+    let client = client.ok_or(Error::HttpClientNotConfigured)?;
 
     // Extract the session ID from the private cookie jar
     let jar = PrivateCookieJar::from_headers(&headers, config.private_cookie_key.clone());
@@ -168,7 +172,7 @@ pub async fn extract_auth_session(parts: &mut Parts) -> Result<AuthSession, Erro
     let session_id = jar
         .get(SESSION_KEY)
         .map(|cookie| cookie.value().to_string())
-        .ok_or_else(|| Error::SessionNotFound)?;
+        .ok_or(Error::SessionNotFound)?;
 
     // Extract and refresh session if needed
     let session = extract_and_refresh_session(&cache, &config, &client, &session_id).await?;

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-06-02
+
+### Changed
+
+- Kept `reqwest` and `redis` out of the public API surface so their major-version updates remain internal implementation details.
+- Relaxed dependency requirements to compatible major/minor ranges where practical, so patch-level dependency updates do not require crate releases.
+- Removed the direct `getrandom` dependency from the `wasm` feature; final applications now choose their own wasm random-source backend.
+- Updated dependency versions while preserving existing feature layout and defaults:
+  - `tokio` 1.41 → 1.52
+  - `reqwest` 0.12.22 → 0.13.4
+  - `serde_html_form` 0.2.7 → 0.4.0
+  - `axum-extra` 0.10.0 → 0.12.6
+  - `axum` 0.8.6 → 0.8.9
+  - `serde` 1.0.219 → 1.0.228
+  - `serde_json` 1.0.140 → 1.0.150
+  - `rand` 0.9.1 → 0.10.1
+  - `http` 1.2.0 → 1.4.1
+  - `futures-util` 0.3.31 → 0.3.32
+  - `tower` 0.5.2 → 0.5.3
+  - `uuid` 1.18.1 → 1.23.2
+  - `time` 0.3.44 → 0.3.47
+  - `redis` 1.0.0-rc.3 → 1.2.2
+  - `moka` 0.12.11 → 0.12.15
+  - `chrono` 0.4.42 → 0.4.44
+  - `sqlx` 0.8 → 0.9
+  - `jsonwebtoken` 10.3 → 10.4
+
 ## [0.6.0] - 2026-05-26
 
 ### Added
