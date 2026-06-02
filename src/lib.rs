@@ -141,8 +141,9 @@
 //!
 //! ### WASM target
 //!
-//! - `wasm` – JS-backed random source (`getrandom/js`) + `jwt`. Use instead of `default`
-//!   when targeting `wasm32-unknown-unknown`. Do not combine with `server`.
+//! - `wasm` – `jwt` support without server-side Axum dependencies. Use instead of `default`
+//!   when targeting `wasm32-unknown-unknown`. Configure any required `getrandom` backend
+//!   in your final application. Do not combine with `server`.
 //!
 //! ## Examples
 //!
@@ -156,7 +157,7 @@ compile_error!(
 pub mod errors;
 
 #[cfg(feature = "server")]
-pub mod http_client;
+pub(crate) mod http_client;
 
 // ── authentication feature ────────────────────────────────────────────────────
 

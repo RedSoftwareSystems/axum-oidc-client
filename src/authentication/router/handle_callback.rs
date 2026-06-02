@@ -44,7 +44,10 @@ async fn get_auth_tokens(
 ) -> Result<(AccessTokenResponse, Option<String>), Error> {
     let querystring = uri.query();
     let query = querystring
-        .map(|qs| serde_html_form::from_str::<CodeExchange>(qs).map_err(Error::InvalidCodeResponse))
+        .map(|qs| {
+            serde_html_form::from_str::<CodeExchange>(qs)
+                .map_err(|e| Error::InvalidCodeResponse(e.to_string()))
+        })
         .ok_or(Error::MissingPatameter("code".to_owned()))
         .flatten()?;
 
@@ -100,16 +103,20 @@ async fn get_auth_tokens(
             },
         )
         .send()
-        .await?;
+        .await
+        .map_err(Error::from_request_error)?;
 
     match res.status() {
         StatusCode::OK => {
-            let auth_session = res.json::<AccessTokenResponse>().await?;
+            let auth_session = res
+                .json::<AccessTokenResponse>()
+                .await
+                .map_err(Error::from_request_error)?;
 
             Ok((auth_session, post_login_redirect))
         }
         status => {
-            let err = res.text().await?;
+            let err = res.text().await.map_err(Error::from_request_error)?;
             Err(Error::from_status_code(status, err))
         }
     }

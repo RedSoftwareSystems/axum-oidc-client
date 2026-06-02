@@ -1,4 +1,4 @@
-# axum-oidc-client API Documentation (v0.6.0)
+# axum-oidc-client API Documentation (v0.6.1)
 
 Complete API documentation and usage guide for the axum-oidc-client library.
 
@@ -59,7 +59,7 @@ Complete API documentation and usage guide for the axum-oidc-client library.
 
 | Flag | Default | Description |
 |---|---|---|
-| `wasm` | ❌ | Enables JS-backed random source (`getrandom/js`) and JWT support. Use instead of `default` when targeting `wasm32-unknown-unknown`. The `server` feature must **not** be enabled alongside `wasm`. |
+| `wasm` | ❌ | Enables JWT support without server-side Axum dependencies. Use instead of `default` when targeting `wasm32-unknown-unknown`. Configure any required `getrandom` backend in your final application. The `server` feature must **not** be enabled alongside `wasm`. |
 
 ## Core Concepts
 

@@ -3,18 +3,15 @@ use std::fmt;
 #[cfg(feature = "server")]
 use axum::response::IntoResponse;
 
-#[cfg(feature = "redis")]
-use redis::RedisError;
-
 #[cfg(feature = "server")]
 #[derive(Debug)]
 pub enum Error {
     MissingCodeVerifier,
     MissingPatameter(String),
     NotValidUri(String),
-    Request(reqwest::Error),
-    InvalidCodeResponse(serde_html_form::de::Error),
-    InvalidTokenResponse(serde_json::Error),
+    Request(String),
+    InvalidCodeResponse(String),
+    InvalidTokenResponse(String),
     InvalidResponse(String),
     CacheError(String),
     TokenRefreshFailed(String),
@@ -46,9 +43,9 @@ pub enum Error {
     MissingCodeVerifier,
     MissingPatameter(String),
     NotValidUri(String),
-    Request(reqwest::Error),
-    InvalidCodeResponse(serde_html_form::de::Error),
-    InvalidTokenResponse(serde_json::Error),
+    Request(String),
+    InvalidCodeResponse(String),
+    InvalidTokenResponse(String),
     InvalidResponse(String),
     CacheError(String),
     TokenRefreshFailed(String),
@@ -225,38 +222,11 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Request(e) => Some(e),
-            Error::InvalidCodeResponse(e) => Some(e),
-            Error::InvalidTokenResponse(e) => Some(e),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for Error {}
 
-impl From<reqwest::Error> for Error {
-    fn from(err: reqwest::Error) -> Self {
-        Error::Request(err)
-    }
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(err: serde_json::Error) -> Self {
-        Error::InvalidTokenResponse(err)
-    }
-}
-
-impl From<serde_html_form::de::Error> for Error {
-    fn from(err: serde_html_form::de::Error) -> Self {
-        Error::InvalidCodeResponse(err)
-    }
-}
-
-#[cfg(feature = "redis")]
-impl From<RedisError> for Error {
-    fn from(err: RedisError) -> Self {
-        Error::CacheError(err.to_string())
+impl Error {
+    #[allow(dead_code)]
+    pub(crate) fn from_request_error(err: reqwest::Error) -> Self {
+        Error::Request(err.to_string())
     }
 }

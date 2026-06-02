@@ -35,11 +35,11 @@ where
     let headers = parts.headers.clone();
 
     // Check cache, config, and client
-    let cache = cache.ok_or_else(|| Error::AuthCacheNotConfigured)?;
+    let cache = cache.ok_or(Error::AuthCacheNotConfigured)?;
 
-    let config = config.ok_or_else(|| Error::OAuthConfigNotConfigured)?;
+    let config = config.ok_or(Error::OAuthConfigNotConfigured)?;
 
-    let client = client.ok_or_else(|| Error::HttpClientNotConfigured)?;
+    let client = client.ok_or(Error::HttpClientNotConfigured)?;
 
     // Extract the session ID from the private cookie jar
     let jar = PrivateCookieJar::from_headers(&headers, config.private_cookie_key.clone());
@@ -47,7 +47,7 @@ where
     let session_id = jar
         .get(SESSION_KEY)
         .map(|cookie| cookie.value().to_string())
-        .ok_or_else(|| Error::SessionNotFound)?;
+        .ok_or(Error::SessionNotFound)?;
 
     // Use shared logic to extract and refresh session if needed
     let session = extract_and_refresh_session(&cache, &config, &client, &session_id).await?;

@@ -314,7 +314,7 @@ impl OAuthConfigurationBuilder {
             .get(&discovery_url)
             .send()
             .await
-            .map_err(Error::Request)?;
+            .map_err(Error::from_request_error)?;
 
         if !response.status().is_success() {
             let status = response.status();
