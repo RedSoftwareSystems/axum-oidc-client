@@ -968,6 +968,7 @@ All CLI arguments can be set via environment variables:
 | ---------------------------- | ------------------------------ | -------- | -------------------------------------------- |
 | `--client-id`                | `OAUTH_CLIENT_ID`              | Yes      | —                                            |
 | `--client-secret`            | `OAUTH_CLIENT_SECRET`          | Yes      | —                                            |
+| `--audience`                 | `OAUTH_AUDIENCE`               | No       | — (authorization-request API/resource identifier) |
 | `--issuer`                   | `OAUTH_ISSUER`                 | No       | — (enables OIDC autodiscovery when set)      |
 | `--authorization-endpoint`   | `OAUTH_AUTHORIZATION_ENDPOINT` | No       | — (required when `--issuer` is not set)      |
 | `--token-endpoint`           | `OAUTH_TOKEN_ENDPOINT`         | No       | — (required when `--issuer` is not set)      |

@@ -37,6 +37,7 @@ Edit `.env` and replace the placeholder values:
 
 - `OAUTH_CLIENT_ID` - Your OAuth2 client ID
 - `OAUTH_CLIENT_SECRET` - Your OAuth2 client secret
+- `OAUTH_AUDIENCE` - Optional API/resource identifier for providers that require one
 - `PRIVATE_COOKIE_KEY` - Generate with: `openssl rand -base64 64`
 
 ### 3. Run the Application
@@ -100,6 +101,9 @@ OAUTH_BASE_PATH=/api/auth
 
 # Post-logout redirect (default: /)
 POST_LOGOUT_REDIRECT_URI=http://localhost:8080/home
+
+# Authorization-request audience/API resource identifier
+OAUTH_AUDIENCE=https://api.example.com
 
 # PKCE method (default: S256)
 CODE_CHALLENGE_METHOD=S256

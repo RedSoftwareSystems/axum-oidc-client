@@ -34,6 +34,7 @@
 //!     .with_token_endpoint("https://oauth2.googleapis.com/token")
 //!     .with_client_id("your-client-id")
 //!     .with_client_secret("your-client-secret")
+//!     .with_audience("https://api.example.com") // Optional: request an API/resource audience
 //!     .with_redirect_uri("http://localhost:8080/auth/callback")
 //!     .with_private_cookie_key("your-secret-key")
 //!     .with_scopes(vec!["openid", "email", "profile"])

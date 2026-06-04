@@ -264,6 +264,8 @@ pub struct OAuthConfiguration {
     pub client_id: String,
     /// OAuth2 client secret
     pub client_secret: String,
+    /// Optional OAuth2/OIDC audience to request at the authorization endpoint
+    pub audience: Option<String>,
     /// Redirect URI for OAuth2 callback
     pub redirect_uri: String,
     /// Whether to include `redirect_uri` in the token exchange request.

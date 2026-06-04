@@ -19,22 +19,29 @@ fn create_auth_request(
         authorization_endpoint,
         scopes,
         code_challenge_method,
+        audience,
         ..
     } = configuration;
 
-    let params = [
+    let code_challenge = code_challenge.to_string();
+    let code_challenge_method = format!("{code_challenge_method}");
+    let mut params = vec![
         ("response_type", "code"),
-        ("client_id", client_id),
-        ("redirect_uri", redirect_uri),
+        ("client_id", client_id.as_str()),
+        ("redirect_uri", redirect_uri.as_str()),
         ("access_type", "offline"),
         ("prompt", "consent"),
         ("state", state),
-        ("scope", scopes),
-        ("code_challenge", &code_challenge.to_string()),
-        ("code_challenge_method", &format!("{code_challenge_method}")),
+        ("scope", scopes.as_str()),
+        ("code_challenge", code_challenge.as_str()),
+        ("code_challenge_method", code_challenge_method.as_str()),
     ];
 
-    let url = reqwest::Url::parse_with_params(authorization_endpoint, &params)
+    if let Some(audience) = audience {
+        params.push(("audience", audience.as_str()));
+    }
+
+    let url = reqwest::Url::parse_with_params(authorization_endpoint, params)
         .map_err(|_| Error::NotValidUri(authorization_endpoint.to_string()))?;
     Ok(url.to_string())
 }
@@ -69,4 +76,27 @@ pub async fn handle_auth(
     let url = create_auth_request(&configuration, &code_challenge, &state_with_redirect)?;
 
     Ok(Redirect::temporary(&url).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authentication::router::test_helpers::create_test_config;
+
+    #[test]
+    fn create_auth_request_includes_audience_when_configured() {
+        let mut configuration = create_test_config();
+        configuration.audience = Some("https://api.example.com".to_string());
+        let method: Method = configuration.code_challenge_method.to_owned().into();
+        let (_, code_challenge) = Code::generate_using(method, Length::MAX).into_pair();
+
+        let url = create_auth_request(&configuration, &code_challenge, "test-state")
+            .expect("auth URL should be valid");
+        let url = reqwest::Url::parse(&url).expect("auth URL should parse");
+        let audience = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "audience").then_some(value.into_owned()));
+
+        assert_eq!(audience.as_deref(), Some("https://api.example.com"));
+    }
 }

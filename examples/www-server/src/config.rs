@@ -193,6 +193,13 @@ pub struct Args {
     #[arg(long, env = "OAUTH_CLIENT_SECRET")]
     pub client_secret: String,
 
+    /// Optional OAuth2/OIDC audience/resource identifier.
+    ///
+    /// When set, this is sent as the `audience` query parameter on the
+    /// authorization request.
+    #[arg(long, env = "OAUTH_AUDIENCE")]
+    pub audience: Option<String>,
+
     // ── URIs & keys ───────────────────────────────────────────────────────────
     /// OAuth2 redirect (callback) URI.
     #[arg(
@@ -601,6 +608,10 @@ impl Args {
             .with_code_challenge_method(self.code_challenge_method.clone())
             .with_base_path(&self.base_path);
 
+        if let Some(audience) = self.audience.as_deref() {
+            b = b.with_audience(audience);
+        }
+
         b.build()
             .map_err(|e| format!("Failed to build OAuth configuration: {e:?}"))
     }
@@ -622,6 +633,7 @@ impl Args {
             "OAUTH_ISSUER",
             "OAUTH_CLIENT_ID",
             "OAUTH_CLIENT_SECRET",
+            "OAUTH_AUDIENCE",
             "OAUTH_AUTHORIZATION_ENDPOINT",
             "OAUTH_TOKEN_ENDPOINT",
             "OAUTH_END_SESSION_ENDPOINT",
