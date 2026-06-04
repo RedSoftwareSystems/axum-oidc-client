@@ -37,7 +37,7 @@ Edit `.env` and replace the placeholder values:
 
 - `OAUTH_CLIENT_ID` - Your OAuth2 client ID
 - `OAUTH_CLIENT_SECRET` - Your OAuth2 client secret
-- `OAUTH_AUDIENCE` - Optional API/resource identifier for providers that require one
+- `WWW_OAUTH_AUDIENCE` / `API_OAUTH_AUDIENCE` - Optional per-service audience values (no default)
 - `PRIVATE_COOKIE_KEY` - Generate with: `openssl rand -base64 64`
 
 ### 3. Run the Application
@@ -102,8 +102,14 @@ OAUTH_BASE_PATH=/api/auth
 # Post-logout redirect (default: /)
 POST_LOGOUT_REDIRECT_URI=http://localhost:8080/home
 
-# Authorization-request audience/API resource identifier
-OAUTH_AUDIENCE=https://api.example.com
+# Optional audience requested by www-server and validated by api-server.
+# No default is applied when unset.
+# For Google OIDC, `aud` in ID token is normally client ID automatically.
+WWW_OAUTH_AUDIENCE=https://example.com
+API_OAUTH_AUDIENCE=https://example.com
+
+# Legacy shared audience fallback (used only when service-specific vars are unset)
+# OAUTH_AUDIENCE=https://example.com
 
 # PKCE method (default: S256)
 CODE_CHALLENGE_METHOD=S256

@@ -28,8 +28,10 @@
 //! |-------------------------------|---------------|------------------------------------------------------|
 //! | `--host` / `SERVER_HOST`      | `127.0.0.1`   | Bind address                                         |
 //! | `--port` / `SERVER_PORT`      | `8181`        | Bind port                                            |
-//! | `--issuer` / `JWT_ISSUER`     | *(required)*  | OIDC issuer URL; discovery doc fetched automatically |
+//! | `--issuer` / `OAUTH_ISSUER`   | *(required)*  | OIDC issuer URL; discovery doc fetched automatically |
+//! | `--audience` / `API_OAUTH_AUDIENCE` | *(none)* | Expected JWT `aud` claim                     |
 //! | `--custom-ca-cert` / `CUSTOM_CA_CERT` | *(none)* | PEM CA cert for private OIDC providers            |
+//! | `DOTENV_FILE`                    | *(none)*      | Dotenv file loaded before CLI/env parsing         |
 //!
 //! ## Quick start
 //!
@@ -42,7 +44,7 @@
 mod layers;
 mod routes;
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc};
 
 use axum::{Router, routing::get};
 use clap::Parser;
@@ -71,10 +73,47 @@ struct Args {
     #[arg(long, env = "OAUTH_ISSUER")]
     issuer: String,
 
+    /// Expected OAuth2/OIDC audience in incoming JWTs.
+    ///
+    /// Resolution order: CLI `--audience`, `API_OAUTH_AUDIENCE`, then legacy
+    /// `OAUTH_AUDIENCE`.
+    #[arg(long)]
+    audience: Option<String>,
+
     /// Path to a PEM-encoded custom CA certificate for HTTPS requests to the
     /// OIDC issuer.  Only required when the provider uses a private CA.
     #[arg(long, env = "CUSTOM_CA_CERT")]
     custom_ca_cert: Option<String>,
+}
+
+impl Args {
+    fn load_dotenv() {
+        if let Ok(path) = env::var("DOTENV_FILE") {
+            let _ = dotenv::from_path(path);
+            return;
+        }
+
+        let _ = dotenv::from_filename("../.env.local")
+            .or_else(|_| dotenv::from_filename(".env.local"))
+            .or_else(|_| dotenv::dotenv());
+    }
+
+    fn parse_and_load() -> Self {
+        Self::load_dotenv();
+        Self::parse()
+    }
+
+    fn env_non_empty(key: &str) -> Option<String> {
+        env::var(key).ok().filter(|value| !value.trim().is_empty())
+    }
+
+    fn resolved_audience(&self) -> Option<String> {
+        self.audience
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| Self::env_non_empty("API_OAUTH_AUDIENCE"))
+            .or_else(|| Self::env_non_empty("OAUTH_AUDIENCE"))
+    }
 }
 
 // ── entry point ───────────────────────────────────────────────────────────────
@@ -85,7 +124,7 @@ async fn main() {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
-    let args = Args::parse();
+    let args = Args::parse_and_load();
 
     // ── Build JwtConfiguration via OIDC auto-discovery ────────────────────────
     info!("Fetching OIDC discovery document from {}", args.issuer);
@@ -96,10 +135,17 @@ async fn main() {
         builder = builder.with_custom_ca_cert(path);
     }
 
-    let builder = builder.with_issuer(&args.issuer).await.unwrap_or_else(|e| {
+    let mut builder = builder.with_issuer(&args.issuer).await.unwrap_or_else(|e| {
         eprintln!("error: OIDC discovery failed for {}: {e}", args.issuer);
         std::process::exit(1);
     });
+
+    if let Some(audience) = args.resolved_audience() {
+        info!("Validating JWT audience: {audience}");
+        builder = builder.with_audience(vec![audience]);
+    } else {
+        info!("JWT audience validation disabled; set API_OAUTH_AUDIENCE to enable it");
+    }
 
     let jwt_config = builder.build().unwrap_or_else(|e| {
         eprintln!("error: failed to build JWT configuration: {e}");

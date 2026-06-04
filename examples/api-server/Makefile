@@ -14,6 +14,7 @@
 #
 # Key variables read from the shared file:
 #   OAUTH_ISSUER       OIDC issuer URL for JWT validation  (required)
+#   API_OAUTH_AUDIENCE Optional expected JWT audience
 #   CUSTOM_CA_CERT     path to PEM CA cert                  (optional)
 #   SERVER_HOST        bind address                         (default: 127.0.0.1)
 #   SERVER_PORT        bind port                            (default: 8181)
@@ -82,6 +83,7 @@ help:
 	@echo -e "$(BLUE)Environment / overrides:$(NC)"
 	@echo "  HOST=$(HOST)      (override: HOST=0.0.0.0 make run)"
 	@echo "  PORT=$(PORT)      (override: PORT=9090 make run)"
+	@echo "  API_OAUTH_AUDIENCE=<value>  optional audience validation"
 	@echo "  ENV_FILE=$(ENV_FILE)"
 	@echo "  DOTENV_FILE=<path> make run   (use a custom dotenv file)"
 	@echo ""
@@ -94,8 +96,9 @@ help:
 	@echo "  OAUTH_ISSUER     OIDC issuer URL  (e.g. https://accounts.google.com)"
 	@echo ""
 	@echo -e "$(BLUE)Optional configuration:$(NC)"
-	@echo "  CUSTOM_CA_CERT   Path to a PEM CA certificate for private OIDC providers"
-	@echo "  SERVER_HOST      Bind address          (default: 127.0.0.1)"
+	@echo "  API_OAUTH_AUDIENCE  Optional expected JWT audience"
+	@echo "  CUSTOM_CA_CERT       Path to a PEM CA certificate for private OIDC providers"
+	@echo "  SERVER_HOST          Bind address          (default: 127.0.0.1)"
 	@echo "  SERVER_PORT      Bind port             (default: 8181)"
 
 # ── install ────────────────────────────────────────────────────────────────────

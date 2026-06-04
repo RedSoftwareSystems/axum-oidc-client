@@ -193,11 +193,14 @@ pub struct Args {
     #[arg(long, env = "OAUTH_CLIENT_SECRET")]
     pub client_secret: String,
 
-    /// Optional OAuth2/OIDC audience/resource identifier.
+    /// OAuth2/OIDC audience/resource identifier.
+    ///
+    /// Resolution order: CLI `--audience`, `WWW_OAUTH_AUDIENCE`, then legacy
+    /// `OAUTH_AUDIENCE`.
     ///
     /// When set, this is sent as the `audience` query parameter on the
     /// authorization request.
-    #[arg(long, env = "OAUTH_AUDIENCE")]
+    #[arg(long)]
     pub audience: Option<String>,
 
     // ── URIs & keys ───────────────────────────────────────────────────────────
@@ -543,6 +546,18 @@ impl Args {
 
     // ── Configuration building ────────────────────────────────────────────────
 
+    fn env_non_empty(key: &str) -> Option<String> {
+        env::var(key).ok().filter(|value| !value.trim().is_empty())
+    }
+
+    fn resolved_audience(&self) -> Option<String> {
+        self.audience
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| Self::env_non_empty("WWW_OAUTH_AUDIENCE"))
+            .or_else(|| Self::env_non_empty("OAUTH_AUDIENCE"))
+    }
+
     /// Build an [`OAuthConfiguration`] from the parsed arguments.
     ///
     /// When `--issuer` (or `OAUTH_ISSUER`) is set the builder fetches the
@@ -608,8 +623,8 @@ impl Args {
             .with_code_challenge_method(self.code_challenge_method.clone())
             .with_base_path(&self.base_path);
 
-        if let Some(audience) = self.audience.as_deref() {
-            b = b.with_audience(audience);
+        if let Some(audience) = self.resolved_audience() {
+            b = b.with_audience(&audience);
         }
 
         b.build()
@@ -633,6 +648,7 @@ impl Args {
             "OAUTH_ISSUER",
             "OAUTH_CLIENT_ID",
             "OAUTH_CLIENT_SECRET",
+            "WWW_OAUTH_AUDIENCE",
             "OAUTH_AUDIENCE",
             "OAUTH_AUTHORIZATION_ENDPOINT",
             "OAUTH_TOKEN_ENDPOINT",
