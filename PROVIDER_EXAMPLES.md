@@ -445,6 +445,7 @@ let config = OAuthConfigurationBuilder::default()
     ))
     .with_client_id("your-auth0-client-id")
     .with_client_secret("your-auth0-client-secret")
+    .with_audience("https://api.example.com") // Optional: Auth0 API Identifier
     .with_redirect_uri("http://localhost:8080/auth/callback")
     .with_post_logout_redirect_uri("http://localhost:8080")
     .with_private_cookie_key("your-secret-key-at-least-32-bytes")
@@ -479,6 +480,7 @@ OAUTH_TOKEN_ENDPOINT=https://${AUTH0_DOMAIN}/oauth/token
 OAUTH_END_SESSION_ENDPOINT=https://${AUTH0_DOMAIN}/v2/logout
 OAUTH_CLIENT_ID=your-auth0-client-id
 OAUTH_CLIENT_SECRET=your-auth0-client-secret
+OAUTH_AUDIENCE=https://api.example.com
 OAUTH_REDIRECT_URI=http://localhost:8080/auth/callback
 POST_LOGOUT_REDIRECT_URI=http://localhost:8080
 OAUTH_SCOPES=openid,email,profile
@@ -495,6 +497,7 @@ SESSION_MAX_AGE=30
 5. Add Allowed Callback URLs: `http://localhost:8080/auth/callback`
 6. Add Allowed Logout URLs: `http://localhost:8080`
 7. Copy Domain, Client ID, and Client Secret
+8. If you need access tokens for a custom API, set `OAUTH_AUDIENCE` to that API's Auth0 Identifier and pass it with `with_audience(...)`
 
 ---
 

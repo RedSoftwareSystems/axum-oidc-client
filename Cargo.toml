@@ -1,6 +1,6 @@
 [package]
 name = "axum-oidc-client"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 license = "MIT"
 description = "OpenID Connect (OIDC) and OAuth2 client middleware for Axum web framework"

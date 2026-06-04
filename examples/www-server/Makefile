@@ -21,6 +21,7 @@
 #   OAUTH_CLIENT_SECRET     OAuth2 client secret                (required)
 #   OAUTH_REDIRECT_URI      Callback URI                        (default: http://localhost:8080/auth/callback)
 #   PRIVATE_COOKIE_KEY      Session encryption key              (change in prod!)
+#   WWW_OAUTH_AUDIENCE      Optional audience requested from provider
 #   SERVER_HOST / SERVER_PORT
 #   API_SERVER              upstream api-server base URL        (default: http://127.0.0.1:8181)
 
@@ -185,6 +186,7 @@ help:
 	@echo "  HOST=$(HOST)        (override: HOST=0.0.0.0 make run)"
 	@echo "  PORT=$(PORT)        (override: PORT=3000 make run)"
 	@echo "  FEATURES=$(FEATURES)   (override: FEATURES=cache-l2 make run)"
+	@echo "  WWW_OAUTH_AUDIENCE=<value>  optional audience override"
 	@echo "  ENV_FILE=$(ENV_FILE)"
 	@echo "  DOTENV_FILE=<path> make run  (use a custom dotenv file)"
 	@echo ""
@@ -259,6 +261,9 @@ setup:
 			printf '# Scopes (www-server)\n'                                                  >> "$(ENV_FILE)"; \
 			printf 'OAUTH_SCOPES=openid,email,profile\n'                                      >> "$(ENV_FILE)"; \
 			printf '\n'                                                                        >> "$(ENV_FILE)"; \
+			printf '# Optional audience requested by www-server\n'                         >> "$(ENV_FILE)"; \
+			printf '# WWW_OAUTH_AUDIENCE=\n'                                                >> "$(ENV_FILE)"; \
+			printf '\n'                                                                        >> "$(ENV_FILE)"; \
 			printf '# ── www-server ───────────────────────────────────────────────────────\n' >> "$(ENV_FILE)"; \
 			printf 'SERVER_HOST=$(HOST)\n'                                                    >> "$(ENV_FILE)"; \
 			printf 'SERVER_PORT=$(PORT)\n'                                                    >> "$(ENV_FILE)"; \
@@ -267,6 +272,8 @@ setup:
 			printf 'API_SERVER=http://127.0.0.1:8181\n'                                       >> "$(ENV_FILE)"; \
 			printf '\n'                                                                        >> "$(ENV_FILE)"; \
 			printf '# ── api-server ───────────────────────────────────────────────────────\n' >> "$(ENV_FILE)"; \
+			printf '# Optional JWT audience validated by api-server\n'                      >> "$(ENV_FILE)"; \
+			printf '# API_OAUTH_AUDIENCE=\n'                                                >> "$(ENV_FILE)"; \
 			printf '# SERVER_HOST=127.0.0.1\n'                                                >> "$(ENV_FILE)"; \
 			printf '# SERVER_PORT=8181\n'                                                     >> "$(ENV_FILE)"; \
 			printf '\n'                                                                        >> "$(ENV_FILE)"; \

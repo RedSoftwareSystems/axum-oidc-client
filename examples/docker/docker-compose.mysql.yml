@@ -65,6 +65,7 @@ x-app-env: &app-env
   OAUTH_ISSUER: ${OAUTH_ISSUER:-}
   OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-}
   OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-}
+  OAUTH_AUDIENCE: ${OAUTH_AUDIENCE:-}
   OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-http://localhost:8080/auth/callback}
   PRIVATE_COOKIE_KEY: ${PRIVATE_COOKIE_KEY:-change-me-in-production}
 
@@ -212,6 +213,7 @@ services:
 
     environment:
       <<: *app-env
+      API_OAUTH_AUDIENCE: ${API_OAUTH_AUDIENCE:-}
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "8181"
 
@@ -246,6 +248,7 @@ services:
 
     environment:
       <<: *app-env
+      WWW_OAUTH_AUDIENCE: ${WWW_OAUTH_AUDIENCE:-}
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "8080"
       # Point www-server's reverse proxy at the api-server service name.

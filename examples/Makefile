@@ -11,6 +11,8 @@
 #
 # Usage:
 #   make                   → this help
+#   make run               → run api-server + www-server locally
+#   make dev               → watch-run api-server + www-server locally
 #   make l1-up             → start L1-only stack (no external backend)
 #   make pg-up             → start PostgreSQL stack
 #   make redis-up          → start Redis stack
@@ -19,11 +21,33 @@
 
 # ── Variables ──────────────────────────────────────────────────────────────────
 
+SHELL := /bin/bash
+
+# Resolve the directory of THIS Makefile so forwarded paths work regardless of cwd.
+THIS_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
 # Shared env file — lives in examples/, passed to every docker compose call.
 ENV_FILE ?= $(or $(DOTENV_FILE),.env.local)
+ENV_FILE_ABS = $(if $(filter /%,$(ENV_FILE)),$(ENV_FILE),$(THIS_DIR)$(ENV_FILE))
 
 # Host-side port exposed by www-server (override: WWW_PORT=9090 make l1-up)
 WWW_PORT ?= 8080
+
+# Local development bind settings for parent run/dev targets.
+HOST ?= 127.0.0.1
+API_PORT ?= 8181
+
+# Optional audience overrides for parent run/dev targets.
+# Undefined by default so DOTENV_FILE values can be loaded by the sub-servers.
+WWW_AUDIENCE_ARG = $(if $(strip $(WWW_OAUTH_AUDIENCE)),WWW_OAUTH_AUDIENCE=$(WWW_OAUTH_AUDIENCE))
+API_AUDIENCE_ARG = $(if $(strip $(API_OAUTH_AUDIENCE)),API_OAUTH_AUDIENCE=$(API_OAUTH_AUDIENCE))
+
+# Cargo feature set forwarded to www-server run/dev targets.
+FEATURES ?= cache-l1
+
+# Sub-project paths
+WWW_SERVER_DIR      = www-server
+API_SERVER_DIR      = api-server
 
 # Docker Compose file paths
 DOCKER_DIR          = docker
@@ -52,12 +76,72 @@ NC     = \033[0m
 
 .DEFAULT_GOAL := help
 
+# ── local development ─────────────────────────────────────────────────────────
+
+.PHONY: run
+run:
+	@echo -e "$(GREEN)Starting api-server + www-server…$(NC)"
+	@echo -e "$(BLUE)  api-server : http://$(HOST):$(API_PORT)$(NC)"
+	@echo -e "$(BLUE)  www-server : http://$(HOST):$(WWW_PORT)$(NC)"
+	@echo -e "$(YELLOW)  Press Ctrl-C to stop both$(NC)"
+	@$(MAKE) -C $(API_SERVER_DIR) run \
+		HOST=$(HOST) \
+		PORT=$(API_PORT) \
+		$(API_AUDIENCE_ARG) \
+		DOTENV_FILE="$(ENV_FILE_ABS)" & \
+		api_pid=$$!; \
+	$(MAKE) -C $(WWW_SERVER_DIR) run \
+		HOST=$(HOST) \
+		PORT=$(WWW_PORT) \
+		FEATURES=$(FEATURES) \
+		API_SERVER="http://$(HOST):$(API_PORT)" \
+		$(WWW_AUDIENCE_ARG) \
+		DOTENV_FILE="$(ENV_FILE_ABS)" & \
+		www_pid=$$!; \
+	trap 'kill $$api_pid $$www_pid 2>/dev/null || true; wait 2>/dev/null || true; exit 0' INT TERM; \
+	wait -n $$api_pid $$www_pid; status=$$?; \
+	kill $$api_pid $$www_pid 2>/dev/null || true; \
+	wait $$api_pid $$www_pid 2>/dev/null || true; \
+	if [ $$status -eq 130 ] || [ $$status -eq 143 ]; then exit 0; fi; \
+	exit $$status
+
+.PHONY: dev
+dev:
+	@echo -e "$(GREEN)Starting api-server + www-server with hot-reload…$(NC)"
+	@echo -e "$(BLUE)  api-server : http://$(HOST):$(API_PORT)$(NC)"
+	@echo -e "$(BLUE)  www-server : http://$(HOST):$(WWW_PORT)$(NC)"
+	@echo -e "$(YELLOW)  Press Ctrl-C to stop both$(NC)"
+	@$(MAKE) -C $(API_SERVER_DIR) dev \
+		HOST=$(HOST) \
+		PORT=$(API_PORT) \
+		$(API_AUDIENCE_ARG) \
+		DOTENV_FILE="$(ENV_FILE_ABS)" & \
+		api_pid=$$!; \
+	$(MAKE) -C $(WWW_SERVER_DIR) dev \
+		HOST=$(HOST) \
+		PORT=$(WWW_PORT) \
+		FEATURES=$(FEATURES) \
+		API_SERVER="http://$(HOST):$(API_PORT)" \
+		$(WWW_AUDIENCE_ARG) \
+		DOTENV_FILE="$(ENV_FILE_ABS)" & \
+		www_pid=$$!; \
+	trap 'kill $$api_pid $$www_pid 2>/dev/null || true; wait 2>/dev/null || true; exit 0' INT TERM; \
+	wait -n $$api_pid $$www_pid; status=$$?; \
+	kill $$api_pid $$www_pid 2>/dev/null || true; \
+	wait $$api_pid $$www_pid 2>/dev/null || true; \
+	if [ $$status -eq 130 ] || [ $$status -eq 143 ]; then exit 0; fi; \
+	exit $$status
+
 # ── help ───────────────────────────────────────────────────────────────────────
 
 .PHONY: help
 help:
 	@echo -e "$(GREEN)Examples — Docker Compose targets$(NC)"
-	@echo -e "$(BLUE)For cargo targets (run, dev, build, test, …) use the sub-Makefiles:$(NC)"
+	@echo -e "$(YELLOW)Local development:$(NC)"
+	@echo "  make run           - Run api-server + www-server locally"
+	@echo "  make dev           - Watch-run api-server + www-server locally"
+	@echo ""
+	@echo -e "$(BLUE)For other cargo targets (build, test, …) use the sub-Makefiles:$(NC)"
 	@echo "  make -C www-server help"
 	@echo "  make -C api-server help"
 	@echo ""
@@ -103,8 +187,13 @@ help:
 	@echo "  make sqlite-shell    - Open sqlite3 shell"
 	@echo ""
 	@echo -e "$(BLUE)Variable overrides:$(NC)"
-	@echo "  WWW_PORT=$(WWW_PORT)        host-side port for www-server"
-	@echo "  DOTENV_FILE=<path>    shared env file (default: $(ENV_FILE))"
+	@echo "  HOST=$(HOST)                    bind host for local run/dev"
+	@echo "  API_PORT=$(API_PORT)                 api-server port for local run/dev"
+	@echo "  WWW_PORT=$(WWW_PORT)                 www-server port"
+	@echo "  FEATURES=$(FEATURES)             www-server cargo features for local run/dev"
+	@echo "  WWW_OAUTH_AUDIENCE=<value>  optional override; unset lets DOTENV_FILE decide"
+	@echo "  API_OAUTH_AUDIENCE=<value>  optional override; unset lets DOTENV_FILE decide"
+	@echo "  DOTENV_FILE=<path>             shared env file (default: $(ENV_FILE))"
 
 # ── L1 (Moka in-process, no external backend) ─────────────────────────────────
 

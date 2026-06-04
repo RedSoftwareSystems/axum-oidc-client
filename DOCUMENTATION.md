@@ -1,4 +1,4 @@
-# axum-oidc-client API Documentation (v0.6.1)
+# axum-oidc-client API Documentation (v0.7.0)
 
 Complete API documentation and usage guide for the axum-oidc-client library.
 
@@ -403,6 +403,7 @@ OAuth2/OIDC configuration container.
 - `client_id: String` - OAuth2 client identifier
 - `base_path: String` - Base path for authentication routes (default: "/auth")
 - `client_secret: String` - OAuth2 client secret
+- `audience: Option<String>` - Optional `audience` query parameter sent to the authorization endpoint
 - `redirect_uri: String` - Callback URI
 - `authorization_endpoint: String` - Provider's auth endpoint
 - `token_endpoint: String` - Provider's token endpoint
@@ -460,6 +461,7 @@ Fluent API for building configurations.
 | `with_issuer(url).await?`            | No*      | OIDC auto-discovery: populates `authorization_endpoint`, `token_endpoint`, and `end_session_endpoint` from the provider's discovery document |
 | `with_client_id(id)`                 | Yes      | Set OAuth2 client ID                               |
 | `with_client_secret(secret)`         | Yes      | Set OAuth2 client secret                           |
+| `with_audience(audience)`            | No       | Set optional authorization-request audience/resource identifier |
 | `with_redirect_uri(uri)`             | Yes      | Set callback URI                                   |
 | `with_authorization_endpoint(url)`   | Yes*     | Set auth endpoint (not required when using `with_issuer`) |
 | `with_token_endpoint(url)`           | Yes*     | Set token endpoint (not required when using `with_issuer`) |
@@ -501,6 +503,7 @@ let config = OAuthConfigurationBuilder::default()
 let config = OAuthConfigurationBuilder::default()
     .with_client_id("client-id")
     .with_client_secret("client-secret")
+    .with_audience("https://api.example.com") // Optional: request an API/resource audience
     .with_redirect_uri("http://localhost:8080/auth/callback")
     .with_authorization_endpoint("https://provider.com/oauth/authorize")
     .with_token_endpoint("https://provider.com/oauth/token")
@@ -509,6 +512,8 @@ let config = OAuthConfigurationBuilder::default()
     .with_base_path("/auth")  // Optional, default is "/auth"
     .build()?;
 ```
+
+`with_audience(...)` affects the OAuth/OIDC authorization redirect by adding an `audience` query parameter. It is separate from `JwtConfigurationBuilder::with_audience(...)`, which validates the `aud` claim on incoming bearer tokens.
 
 **Custom Base Path Example:**
 
@@ -1168,6 +1173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = OAuthConfigurationBuilder::default()
         .with_client_id(std::env::var("OAUTH_CLIENT_ID")?)
         .with_client_secret(std::env::var("OAUTH_CLIENT_SECRET")?)
+        .with_audience("https://api.example.com") // Optional: request an API/resource audience
         .with_redirect_uri("http://localhost:8080/auth/callback")
         .with_authorization_endpoint("https://provider.com/authorize")
         .with_token_endpoint("https://provider.com/token")
@@ -1337,7 +1343,7 @@ use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = OAuthConfigurationBuilder::default()
+    let mut builder = OAuthConfigurationBuilder::default()
         .with_client_id(&env::var("OAUTH_CLIENT_ID")?)
         .with_client_secret(&env::var("OAUTH_CLIENT_SECRET")?)
         .with_redirect_uri(&env::var("OAUTH_REDIRECT_URI")?)
@@ -1346,8 +1352,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_private_cookie_key(&env::var("PRIVATE_COOKIE_KEY")?)
         .with_session_max_age(
             env::var("SESSION_MAX_AGE")?.parse().unwrap_or(30)
-        )
-        .build()?;
+        );
+
+    if let Ok(audience) = env::var("OAUTH_AUDIENCE") {
+        builder = builder.with_audience(&audience);
+    }
+
+    let config = builder.build()?;
 
     let cache: Arc<dyn axum_oidc_client::auth_cache::AuthCache + Send + Sync> = Arc::new(
         axum_oidc_client::cache::TwoTierAuthCache::new(

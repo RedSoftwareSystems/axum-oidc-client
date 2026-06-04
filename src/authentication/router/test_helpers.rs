@@ -76,6 +76,7 @@ pub(crate) fn create_test_config() -> OAuthConfiguration {
         private_cookie_key: Key::from(&[0u8; 64]),
         client_id: "test-client".to_string(),
         client_secret: "test-secret".to_string(),
+        audience: None,
         redirect_uri: "http://localhost:8080/auth/callback".to_string(),
         token_request_redirect_uri: true,
         authorization_endpoint: "http://localhost/auth".to_string(),

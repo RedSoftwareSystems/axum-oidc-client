@@ -190,6 +190,8 @@ pub struct OAuthConfigurationBuilder {
     pub client_id: Option<String>,
     /// OAuth2 client secret
     pub client_secret: Option<String>,
+    /// Optional OAuth2/OIDC audience to request at the authorization endpoint
+    pub audience: Option<String>,
     /// Redirect URI for OAuth2 callback
     pub redirect_uri: Option<String>,
     /// See [`OAuthConfiguration::token_request_redirect_uri`].
@@ -228,6 +230,7 @@ impl Default for OAuthConfigurationBuilder {
             private_cookie_key: None,
             client_id: None,
             client_secret: None,
+            audience: None,
             redirect_uri: None,
             token_request_redirect_uri: true,
             authorization_endpoint: None,
@@ -460,6 +463,30 @@ impl OAuthConfigurationBuilder {
     pub fn with_client_secret(self, client_secret: &str) -> Self {
         Self {
             client_secret: Some(client_secret.to_string()),
+            ..self
+        }
+    }
+
+    /// Set the optional OAuth2/OIDC audience.
+    ///
+    /// When set, the value is sent as the `audience` query parameter on the
+    /// authorization request.
+    ///
+    /// # Arguments
+    ///
+    /// * `audience` - The API/resource identifier requested from the provider
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
+    ///
+    /// let builder = OAuthConfigurationBuilder::default()
+    ///     .with_audience("https://api.example.com");
+    /// ```
+    pub fn with_audience(self, audience: &str) -> Self {
+        Self {
+            audience: Some(audience.to_string()),
             ..self
         }
     }
@@ -822,6 +849,7 @@ impl OAuthConfigurationBuilder {
             client_secret: self
                 .client_secret
                 .ok_or(Error::MissingPatameter("client_secret".to_string()))?,
+            audience: self.audience,
             redirect_uri: self
                 .redirect_uri
                 .ok_or(Error::MissingPatameter("redirect_uri".to_string()))?,

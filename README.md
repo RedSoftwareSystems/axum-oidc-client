@@ -15,7 +15,7 @@ A comprehensive OAuth2/OIDC authentication library for Axum web applications wit
 - 🍪 **Secure Sessions** - Encrypted cookie-based session management
 - 🚪 **Logout Handlers** - Support for both standard and OIDC logout flows
 - 🎯 **Type-safe Extractors** - Convenient extractors for authenticated users and sessions
-- 🔧 **Customizable** - Extensible with custom CA certificates and logout handlers
+- 🔧 **Customizable** - Extensible with custom CA certificates, logout handlers, and authorization-request audience
 - ⚡ **Production Ready** - Battle-tested with comprehensive error handling
 
 ## Installation
@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.6"
+axum-oidc-client = "0.7"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -61,25 +61,25 @@ tokio = { version = "1", features = ["full"] }
 ```toml
 [dependencies]
 # Default: includes server, authentication, jwt, moka-cache, and reqwest-rustls-tls features
-axum-oidc-client = "0.6"
+axum-oidc-client = "0.7"
 
 # With JWT validation + Redis cache backend
-axum-oidc-client = { version = "0.6", features = ["jwt", "redis"] }
+axum-oidc-client = { version = "0.7", features = ["jwt", "redis"] }
 
 # With Redis + two-tier cache (L1 Moka + L2 Redis)
-axum-oidc-client = { version = "0.6", features = ["moka-cache", "redis"] }
+axum-oidc-client = { version = "0.7", features = ["moka-cache", "redis"] }
 
 # With PostgreSQL cache backend
-axum-oidc-client = { version = "0.6", features = ["sql-cache-postgres"] }
+axum-oidc-client = { version = "0.7", features = ["sql-cache-postgres"] }
 
 # With SQLite cache backend (great for development)
-axum-oidc-client = { version = "0.6", features = ["sql-cache-sqlite"] }
+axum-oidc-client = { version = "0.7", features = ["sql-cache-sqlite"] }
 
 # With Moka L1 + PostgreSQL L2 two-tier cache
-axum-oidc-client = { version = "0.6", features = ["moka-cache", "sql-cache-postgres"] }
+axum-oidc-client = { version = "0.7", features = ["moka-cache", "sql-cache-postgres"] }
 
 # WASM target (wasm32-unknown-unknown): disable defaults, enable wasm feature
-axum-oidc-client = { version = "0.6", default-features = false, features = ["wasm"] }
+axum-oidc-client = { version = "0.7", default-features = false, features = ["wasm"] }
 ```
 
 ## Quick Start
@@ -102,6 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_token_endpoint("https://oauth2.googleapis.com/token")
         .with_client_id("your-client-id")
         .with_client_secret("your-client-secret")
+        .with_audience("https://api.example.com") // Optional: request an API/resource audience
         .with_redirect_uri("http://localhost:8080/auth/callback")
         .with_private_cookie_key("your-secret-key-at-least-32-bytes")
         .with_scopes(vec!["openid", "email", "profile"])

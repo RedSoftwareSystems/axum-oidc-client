@@ -6,7 +6,7 @@ A quick reference guide for common tasks and API usage.
 
 ```toml
 [dependencies]
-axum-oidc-client = "0.6"
+axum-oidc-client = "0.7"
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = OAuthConfigurationBuilder::default()
         .with_client_id("your-client-id")
         .with_client_secret("your-client-secret")
+        .with_audience("https://api.example.com")  // Optional: request an API/resource audience
         .with_redirect_uri("http://localhost:8080/auth/callback")
         .with_authorization_endpoint("https://provider.com/oauth/authorize")
         .with_token_endpoint("https://provider.com/oauth/token")
@@ -199,6 +200,7 @@ OAuthConfigurationBuilder::default()
     // Required
     .with_client_id("client-id")
     .with_client_secret("client-secret")
+    .with_audience("https://api.example.com")  // Optional: request an API/resource audience
     .with_redirect_uri("http://localhost:8080/auth/callback")
     .with_authorization_endpoint("https://provider.com/authorize")
     .with_token_endpoint("https://provider.com/token")
@@ -219,6 +221,7 @@ OAuthConfigurationBuilder::default()
 
 | Setting | Default | When to change |
 |---------|---------|----------------|
+| `with_audience(audience)` | unset | Set when the provider needs an API/resource identifier in the authorization request (e.g. Auth0 access tokens for custom APIs) |
 | `with_token_request_redirect_uri(bool)` | `true` | Set `false` if the provider returns `invalid_request` during token exchange because it rejects a redundant `redirect_uri` (e.g. Okta with a single registered redirect URI) |
 
 ## Route Handlers
@@ -402,9 +405,9 @@ Requires one of the `sql-cache-*` feature flags. An alternative L2 backend to Re
 
 ```toml
 # Choose one (or use sql-cache-all for testing):
-axum-oidc-client = { version = "0.6", features = ["sql-cache-sqlite"] }
-axum-oidc-client = { version = "0.6", features = ["sql-cache-postgres"] }
-axum-oidc-client = { version = "0.6", features = ["sql-cache-mysql"] }
+axum-oidc-client = { version = "0.7", features = ["sql-cache-sqlite"] }
+axum-oidc-client = { version = "0.7", features = ["sql-cache-postgres"] }
+axum-oidc-client = { version = "0.7", features = ["sql-cache-mysql"] }
 ```
 
 ```rust
@@ -916,19 +919,19 @@ async fn test_refresh(session: AuthSession) -> String {
 
 ```toml
 # Default features (server + authentication + jwt + moka-cache + reqwest-rustls-tls)
-axum-oidc-client = "0.6"
+axum-oidc-client = "0.7"
 
 # Add Redis support
-axum-oidc-client = { version = "0.6", features = ["redis"] }
+axum-oidc-client = { version = "0.7", features = ["redis"] }
 
 # JWT only (no OAuth2 session layer)
-axum-oidc-client = { version = "0.6", default-features = false, features = ["jwt", "reqwest-rustls-tls"] }
+axum-oidc-client = { version = "0.7", default-features = false, features = ["jwt", "reqwest-rustls-tls"] }
 
 # Authentication only (no JWT layer)
-axum-oidc-client = { version = "0.6", default-features = false, features = ["server", "authentication", "moka-cache", "reqwest-rustls-tls"] }
+axum-oidc-client = { version = "0.7", default-features = false, features = ["server", "authentication", "moka-cache", "reqwest-rustls-tls"] }
 
 # WASM target (no server feature)
-axum-oidc-client = { version = "0.6", default-features = false, features = ["wasm", "reqwest-rustls-tls"] }
+axum-oidc-client = { version = "0.7", default-features = false, features = ["wasm", "reqwest-rustls-tls"] }
 ```
 
 ## Testing
@@ -966,5 +969,5 @@ openssl rand -hex 32
 
 ---
 
-**Version:** 0.6.0  
-**Last Updated:** 2026-05-26
+**Version:** 0.7.0  
+**Last Updated:** 2026-06-04
