@@ -211,11 +211,15 @@ pub struct OAuthConfigurationBuilder {
     /// Optional path to custom CA certificate
     pub custom_ca_cert: Option<String>,
     /// Maximum session age in minutes
-    pub session_max_age: Option<i64>,
+    pub session_max_age_minutes: Option<i64>,
     /// Maximum token age in minutes
-    pub token_max_age: Option<i64>,
+    pub token_max_age_seconds: Option<i64>,
     /// Base path for authentication routes
     pub base_path: Option<String>,
+    /// Whether the session cookie carries the `Secure` attribute (default: `true`).
+    pub secure_cookies: bool,
+    /// Whether the session cookie SameSite policy is Lax (default: `false` i.e. Strict).
+    pub lax_same_site: bool,
     /// Tracks whether `with_code_challenge_method` was called explicitly so
     /// that `with_issuer` knows not to overwrite it with the discovered value.
     code_challenge_method_explicit: bool,
@@ -240,9 +244,11 @@ impl Default for OAuthConfigurationBuilder {
             scopes: Scopes::default(),
             code_challenge_method: CodeChallengeMethod::default(),
             custom_ca_cert: None,
-            session_max_age: None,
-            token_max_age: None,
+            session_max_age_minutes: None,
+            token_max_age_seconds: None,
             base_path: None,
+            secure_cookies: true,
+            lax_same_site: false,
             code_challenge_method_explicit: false,
             scopes_explicit: false,
         }
@@ -421,6 +427,48 @@ impl OAuthConfigurationBuilder {
             ..self
         }
     }
+
+    /// Set whether the session cookie carries the `Secure` attribute.
+    ///
+    /// Defaults to `true` (HTTPS-only). Set to `false` only for local
+    /// development served over plain `http://localhost`, where browsers can
+    /// drop a `Secure` cookie in cross-site redirect contexts (e.g. returning
+    /// from an HTTPS identity provider), breaking the session round-trip.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
+    ///
+    /// let builder = OAuthConfigurationBuilder::default()
+    ///     .with_secure_cookies(false); // local http dev only
+    /// ```
+    pub fn with_secure_cookies(self, secure_cookies: bool) -> Self {
+        Self {
+            secure_cookies,
+            ..self
+        }
+    }
+
+    /// Set whether the same-site policy is Lax or Strict. Useful for multi-host OIDC providers.
+    ///
+    /// Defaults to Strict (`false`). Set to `true` to use Lax SameSite policy.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
+    ///
+    /// let builder = OAuthConfigurationBuilder::default()
+    ///     .with_lax_same_site(true);
+    /// ```
+    pub fn with_lax_same_site(self, lax_same_site: bool) -> Self {
+        Self {
+            lax_same_site,
+            ..self
+        }
+    }
+
     /// Set the OAuth2 client ID.
     ///
     /// # Arguments
@@ -723,7 +771,7 @@ impl OAuthConfigurationBuilder {
     /// ```
     pub fn with_session_max_age(self, minutes: i64) -> Self {
         Self {
-            session_max_age: Some(minutes),
+            session_max_age_minutes: Some(minutes),
             ..self
         }
     }
@@ -747,7 +795,7 @@ impl OAuthConfigurationBuilder {
     /// ```
     pub fn with_token_max_age(self, seconds: i64) -> Self {
         Self {
-            token_max_age: Some(seconds),
+            token_max_age_seconds: Some(seconds),
             ..self
         }
     }
@@ -853,10 +901,10 @@ impl OAuthConfigurationBuilder {
             redirect_uri: self
                 .redirect_uri
                 .ok_or(Error::MissingPatameter("redirect_uri".to_string()))?,
-            session_max_age: self
-                .session_max_age
+            session_max_age_minutes: self
+                .session_max_age_minutes
                 .ok_or(Error::MissingPatameter("session_max_age".to_string()))?,
-            token_max_age: self.token_max_age,
+            token_max_age_seconds: self.token_max_age_seconds,
             authorization_endpoint: self.authorization_endpoint.ok_or(Error::MissingPatameter(
                 "authorization_endpoint".to_string(),
             ))?,
@@ -872,6 +920,8 @@ impl OAuthConfigurationBuilder {
             custom_ca_cert: self.custom_ca_cert,
             base_path: self.base_path.unwrap_or_else(|| "/auth".to_string()),
             token_request_redirect_uri: self.token_request_redirect_uri,
+            secure_cookies: self.secure_cookies,
+            lax_same_site: self.lax_same_site,
         };
         Ok(layer)
     }

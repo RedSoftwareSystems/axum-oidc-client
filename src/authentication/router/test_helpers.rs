@@ -85,9 +85,11 @@ pub(crate) fn create_test_config() -> OAuthConfiguration {
         post_logout_redirect_uri: "/".to_string(),
         scopes: "openid email".to_string(),
         code_challenge_method: CodeChallengeMethod::S256,
-        session_max_age: 30,
-        token_max_age: Some(60),
+        session_max_age_minutes: 30,
+        token_max_age_seconds: Some(60),
         custom_ca_cert: None,
         base_path: "/auth".to_string(),
+        secure_cookies: true,
+        lax_same_site: false,
     }
 }

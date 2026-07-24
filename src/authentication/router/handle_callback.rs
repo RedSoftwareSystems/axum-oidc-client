@@ -1,5 +1,5 @@
 use axum::response::{Html, IntoResponse, Response};
-use axum_extra::extract::{PrivateCookieJar, cookie::Cookie};
+use axum_extra::extract::PrivateCookieJar;
 
 use http::{StatusCode, Uri, request::Parts};
 use reqwest::{self, Client};
@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::{
     authentication::{
         cache::AuthCache,
+        cookies::build_session_cookie,
         session::AuthSession,
         {OAuthConfiguration, SESSION_KEY},
     },
@@ -156,14 +157,15 @@ pub async fn handle_callback(parts: &mut Parts, uri: Uri) -> Result<Response, Er
         .set_auth_session(&id, AuthSession::new(&token_response, &configuration))
         .await?;
 
-    let jar = jar.add(
-        Cookie::build((SESSION_KEY, id.clone()))
-            .path("/")
-            .http_only(true)
-            .same_site(axum_extra::extract::cookie::SameSite::Strict)
-            .secure(true)
-            .max_age(Duration::minutes(60)),
-    );
+    tracing::debug!("auth: token exchange succeeded, session stored and cookie set");
+
+    let jar = jar.add(build_session_cookie(
+        SESSION_KEY,
+        Some(id.clone()),
+        configuration.lax_same_site,
+        configuration.secure_cookies,
+        Some(Duration::minutes(configuration.session_max_age_minutes)),
+    ));
 
     // Belt-and-suspenders validation: re-check the redirect path even though
     // handle_auth already validated it before embedding it in the state.  The

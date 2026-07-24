@@ -73,6 +73,7 @@ use std::{
 };
 pub mod builder;
 pub mod cache;
+pub mod cookies;
 pub mod logout;
 #[cfg(feature = "moka-cache")]
 pub mod moka;
@@ -199,7 +200,7 @@ impl AuthSession {
             token_type: response.token_type.to_owned(),
             refresh_token: response.refresh_token.clone(),
             scope: response.scope.clone(),
-            expires: calculate_token_expiration(response.expires_in, conf.token_max_age),
+            expires: calculate_token_expiration(response.expires_in, conf.token_max_age_seconds),
         }
     }
 }
@@ -231,7 +232,7 @@ impl From<CodeChallengeMethod> for Method {
 /// * `scopes` - Space-separated list of OAuth2 scopes
 /// * `code_challenge_method` - PKCE code challenge method
 /// * `custom_ca_cert` - Optional path to custom CA certificate
-/// * `session_max_age` - Maximum session age in seconds
+/// * `session_max_age` - Maximum session age in minutes
 /// * `token_max_age` - Optional maximum token age in seconds
 ///
 /// # Examples
@@ -294,11 +295,21 @@ pub struct OAuthConfiguration {
     /// Optional path to custom CA certificate file
     pub custom_ca_cert: Option<String>,
     /// Maximum session age in seconds
-    pub session_max_age: i64,
+    pub session_max_age_minutes: i64,
     /// Optional maximum token age in seconds
-    pub token_max_age: Option<i64>,
+    pub token_max_age_seconds: Option<i64>,
     /// Base path for authentication routes (default: "/auth")
     pub base_path: String,
+    /// Whether the session cookie carries the `Secure` attribute.
+    ///
+    /// `true` (default) restricts the cookie to HTTPS. Set to `false` only for
+    /// local development over plain `http://localhost`, where a `Secure` cookie
+    /// can be dropped by the browser in cross-site redirect contexts.
+    pub secure_cookies: bool,
+    /// Whether the session cookie SameSite policy is Lax.
+    ///
+    /// `false` (default) uses Strict SameSite policy. Set to `true` to use Lax.
+    pub lax_same_site: bool,
 }
 
 /// Session cookie key name.
@@ -507,6 +518,21 @@ where
             .get(SESSION_KEY)
             .map(|cookie| cookie.value().to_string());
 
+        // Per-request cookie-state visibility for auth debugging (debug level).
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let raw_has_cookie = headers
+                .get(http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .map(|c| c.contains(SESSION_KEY))
+                .unwrap_or(false);
+            tracing::debug!(
+                path = %path,
+                raw_cookie_header_has_session = raw_has_cookie,
+                has_decrypted_session = session_id.is_some(),
+                "auth: request received"
+            );
+        }
+
         let base_path = &configuration.base_path;
         let auth_route = base_path.clone();
         let callback_route = format!("{}/callback", base_path);
@@ -524,8 +550,15 @@ where
                     })
                     .and_then(|map| map.get("redirect").cloned());
 
+                let existing_session_id = session_id.clone();
                 Box::pin(async move {
-                    Ok(dispatch_auth(configuration, cache, post_login_redirect).await)
+                    Ok(dispatch_auth(
+                        configuration,
+                        cache,
+                        post_login_redirect,
+                        existing_session_id,
+                    )
+                    .await)
                 })
             }
             p if p == callback_route => {
@@ -560,7 +593,31 @@ async fn dispatch_auth(
     configuration: Arc<OAuthConfiguration>,
     cache: Arc<dyn AuthCache + Send + Sync>,
     post_login_redirect: Option<String>,
+    existing_session_id: Option<String>,
 ) -> Response {
+    // If the request already carries a valid, live session, do not start a new
+    // OIDC round-trip. Restarting the flow for an already-authenticated user
+    // creates a redirect loop: /auth → provider → /auth/callback (sets a new
+    // cookie, redirects to /) → the app or browser hits /auth again → repeat.
+    // Instead, send the user straight to their intended destination.
+    if let Some(session_id) = existing_session_id
+        && matches!(cache.get_auth_session(&session_id).await, Ok(Some(_)))
+    {
+        let target = match post_login_redirect {
+            Some(path) if path.starts_with('/') && !path.starts_with("//") => path,
+            _ => "/".to_string(),
+        };
+        tracing::debug!(
+            %target,
+            "auth: request to auth route already has a valid session; \
+             skipping OIDC flow and redirecting to app"
+        );
+        // 303 See Other: the correct redirect after a state-changing auth step.
+        // Unlike 307, it is not re-driven by the browser and avoids the rapid
+        // "redirected too many times" bounce when /auth is the active navigation.
+        return axum::response::Redirect::to(&target).into_response();
+    }
+
     handle_auth(configuration, cache, post_login_redirect)
         .await
         .unwrap_or_else(IntoResponse::into_response)
