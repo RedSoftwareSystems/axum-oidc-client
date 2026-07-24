@@ -1,12 +1,15 @@
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum_extra::extract::{PrivateCookieJar, cookie::Cookie};
+use axum_extra::extract::PrivateCookieJar;
 use futures_util::future::BoxFuture;
 use http::request::Parts;
 use std::sync::Arc;
 use urlencoding::encode;
 
 use crate::{
-    authentication::{LogoutHandler, OAuthConfiguration, SESSION_KEY, cache::AuthCache},
+    authentication::{
+        LogoutHandler, OAuthConfiguration, SESSION_KEY, cache::AuthCache,
+        cookies::build_session_cookie,
+    },
     errors::Error,
 };
 
@@ -56,13 +59,13 @@ impl LogoutHandler for OidcLogoutHandler {
             }
 
             // Remove the session cookie
-            let jar = jar.remove(
-                Cookie::build(SESSION_KEY)
-                    .path("/")
-                    .http_only(true)
-                    .same_site(axum_extra::extract::cookie::SameSite::Strict)
-                    .secure(true),
-            );
+            let jar = jar.remove(build_session_cookie(
+                SESSION_KEY,
+                None,
+                configuration.lax_same_site,
+                configuration.secure_cookies,
+                None,
+            ));
 
             // If OIDC end session endpoint is configured, redirect there with id_token_hint
             if let Some(id_token_value) = id_token {

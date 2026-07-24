@@ -1,9 +1,12 @@
 use crate::{
-    authentication::{LogoutHandler, OAuthConfiguration, SESSION_KEY, cache::AuthCache},
+    authentication::{
+        LogoutHandler, OAuthConfiguration, SESSION_KEY, cache::AuthCache,
+        cookies::build_session_cookie,
+    },
     errors::Error,
 };
 use axum::response::{Html, IntoResponse, Response};
-use axum_extra::extract::{PrivateCookieJar, cookie::Cookie};
+use axum_extra::extract::PrivateCookieJar;
 use futures_util::future::BoxFuture;
 use http::request::Parts;
 use std::sync::Arc;
@@ -34,13 +37,13 @@ impl LogoutHandler for DefaultLogoutHandler {
             }
 
             // Remove the session cookie
-            let jar = jar.remove(
-                Cookie::build(SESSION_KEY)
-                    .path("/")
-                    .http_only(true)
-                    .same_site(axum_extra::extract::cookie::SameSite::Strict)
-                    .secure(true),
-            );
+            let jar = jar.remove(build_session_cookie(
+                SESSION_KEY,
+                None,
+                configuration.lax_same_site,
+                configuration.secure_cookies,
+                None,
+            ));
 
             Ok((
                 jar,
