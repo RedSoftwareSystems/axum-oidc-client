@@ -310,6 +310,12 @@ pub struct OAuthConfiguration {
     ///
     /// `false` (default) uses Strict SameSite policy. Set to `true` to use Lax.
     pub lax_same_site: bool,
+    /// Whether the session cookie is a browser-session cookie.
+    ///
+    /// `false` (default) sets `Max-Age` on the cookie so it persists across
+    /// browser restarts. Set to `true` to omit `Max-Age`/`Expires` entirely,
+    /// making it a session cookie that the browser drops when it closes.
+    pub session_cookie: bool,
 }
 
 /// Session cookie key name.

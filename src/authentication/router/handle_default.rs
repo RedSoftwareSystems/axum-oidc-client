@@ -34,12 +34,20 @@ where
                 {
                     return Ok(err.into_response());
                 }
+                // Renewal still extends the server-side session (above); the
+                // cookie itself omits Max-Age in session-cookie mode so it stays
+                // a browser-session cookie across renewals too.
+                let cookie_max_age = if configuration.session_cookie {
+                    None
+                } else {
+                    Some(session_max_age)
+                };
                 jar.add(build_session_cookie(
                     SESSION_KEY,
                     Some(id),
                     configuration.lax_same_site,
                     configuration.secure_cookies,
-                    Some(session_max_age),
+                    cookie_max_age,
                 ))
             }
             None => jar,

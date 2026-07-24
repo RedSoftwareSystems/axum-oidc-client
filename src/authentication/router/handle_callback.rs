@@ -159,12 +159,18 @@ pub async fn handle_callback(parts: &mut Parts, uri: Uri) -> Result<Response, Er
 
     tracing::debug!("auth: token exchange succeeded, session stored and cookie set");
 
+    let max_age = if configuration.session_cookie {
+        // Browser-session cookie: omit Max-Age so the browser drops it on close.
+        None
+    } else {
+        Some(Duration::minutes(configuration.session_max_age_minutes))
+    };
     let jar = jar.add(build_session_cookie(
         SESSION_KEY,
         Some(id.clone()),
         configuration.lax_same_site,
         configuration.secure_cookies,
-        Some(Duration::minutes(configuration.session_max_age_minutes)),
+        max_age,
     ));
 
     // Belt-and-suspenders validation: re-check the redirect path even though
