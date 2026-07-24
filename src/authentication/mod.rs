@@ -318,10 +318,9 @@ pub struct OAuthConfiguration {
     pub session_cookie: bool,
     /// Whether to send `prompt=consent` on the authorization request.
     ///
-    /// `false` (default) omits it, allowing silent SSO reuse of an existing
-    /// provider session. Set to `true` to force the provider to re-prompt for
-    /// consent on every authorization request (e.g. to guarantee a fresh
-    /// refresh token).
+    /// `true` (default) forces the provider to re-prompt for consent on every
+    /// authorization request. Set to `false` to omit it, allowing silent SSO
+    /// reuse of an existing provider session.
     pub prompt_consent: bool,
 }
 

@@ -224,7 +224,7 @@ pub struct OAuthConfigurationBuilder {
     /// `Max-Age`/`Expires` so it is dropped on browser close (default: `false`).
     pub session_cookie: bool,
     /// Whether to send `prompt=consent` on the authorization request, forcing a
-    /// re-prompt instead of silent SSO reuse (default: `false`).
+    /// re-prompt instead of silent SSO reuse (default: `true`).
     pub prompt_consent: bool,
     /// Tracks whether `with_code_challenge_method` was called explicitly so
     /// that `with_issuer` knows not to overwrite it with the discovered value.
@@ -256,7 +256,7 @@ impl Default for OAuthConfigurationBuilder {
             secure_cookies: true,
             lax_same_site: false,
             session_cookie: false,
-            prompt_consent: false,
+            prompt_consent: true,
             code_challenge_method_explicit: false,
             scopes_explicit: false,
         }
@@ -499,9 +499,9 @@ impl OAuthConfigurationBuilder {
 
     /// Set whether `prompt=consent` is sent on the authorization request.
     ///
-    /// Defaults to `false` (omitted), allowing silent SSO reuse of an existing
-    /// provider session. Set to `true` to force a consent re-prompt on every
-    /// authorization request.
+    /// Defaults to `true` (a consent re-prompt on every authorization request).
+    /// Set to `false` to omit it, allowing silent SSO reuse of an existing
+    /// provider session.
     ///
     /// # Example
     ///
@@ -509,7 +509,7 @@ impl OAuthConfigurationBuilder {
     /// use axum_oidc_client::auth_builder::OAuthConfigurationBuilder;
     ///
     /// let builder = OAuthConfigurationBuilder::default()
-    ///     .with_prompt_consent(true);
+    ///     .with_prompt_consent(false);
     /// ```
     pub fn with_prompt_consent(self, prompt_consent: bool) -> Self {
         Self {
@@ -1515,7 +1515,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prompt_consent_default_false() {
+    fn test_prompt_consent_default_true() {
         let config = OAuthConfigurationBuilder::default()
             .with_client_id("test")
             .with_client_secret("test")
@@ -1525,27 +1525,27 @@ mod tests {
             .with_private_cookie_key("test_key_at_least_32_bytes_long")
             .with_session_max_age(30)
             .with_post_logout_redirect_uri("/")
-            .build()
-            .unwrap();
-
-        assert!(!config.prompt_consent);
-    }
-
-    #[test]
-    fn test_with_prompt_consent_true() {
-        let config = OAuthConfigurationBuilder::default()
-            .with_client_id("test")
-            .with_client_secret("test")
-            .with_redirect_uri("http://localhost/callback")
-            .with_authorization_endpoint("http://localhost/auth")
-            .with_token_endpoint("http://localhost/token")
-            .with_private_cookie_key("test_key_at_least_32_bytes_long")
-            .with_session_max_age(30)
-            .with_post_logout_redirect_uri("/")
-            .with_prompt_consent(true)
             .build()
             .unwrap();
 
         assert!(config.prompt_consent);
+    }
+
+    #[test]
+    fn test_with_prompt_consent_false() {
+        let config = OAuthConfigurationBuilder::default()
+            .with_client_id("test")
+            .with_client_secret("test")
+            .with_redirect_uri("http://localhost/callback")
+            .with_authorization_endpoint("http://localhost/auth")
+            .with_token_endpoint("http://localhost/token")
+            .with_private_cookie_key("test_key_at_least_32_bytes_long")
+            .with_session_max_age(30)
+            .with_post_logout_redirect_uri("/")
+            .with_prompt_consent(false)
+            .build()
+            .unwrap();
+
+        assert!(!config.prompt_consent);
     }
 }
