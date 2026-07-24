@@ -1,4 +1,4 @@
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum_extra::extract::PrivateCookieJar;
 
 use http::{StatusCode, Uri, request::Parts};
@@ -178,17 +178,14 @@ pub async fn handle_callback(parts: &mut Parts, uri: Uri) -> Result<Response, Er
     // provider echoes the state back verbatim, but a defensive check here
     // prevents any open-redirect if the state were somehow tampered with.
     let redirect_to = match post_login_redirect {
-        Some(path) if path.starts_with('/') && !path.starts_with("//") => {
-            html_escape::encode_safe(&path).to_string()
-        }
+        Some(path) if path.starts_with('/') && !path.starts_with("//") => path,
         _ => "/".to_string(),
     };
 
-    Ok((
-        jar,
-        Html(format!(
-            r#"<head><meta http-equiv="Refresh" content="0; URL={redirect_to}" /></head>"#
-        )),
-    )
-        .into_response())
+    // Use a real HTTP 303 redirect rather than an HTML meta-refresh: the browser
+    // commits the `Set-Cookie` header on this response before following the
+    // `Location`, so the subsequent request carries the session cookie. A
+    // meta-refresh can navigate before the cookie is committed, producing a
+    // "no cookie" bounce back through /auth (the redirect loop).
+    Ok((jar, Redirect::to(&redirect_to)).into_response())
 }

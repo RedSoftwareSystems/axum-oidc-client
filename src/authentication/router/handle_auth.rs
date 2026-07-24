@@ -20,6 +20,7 @@ fn create_auth_request(
         scopes,
         code_challenge_method,
         audience,
+        prompt_consent,
         ..
     } = configuration;
 
@@ -30,12 +31,17 @@ fn create_auth_request(
         ("client_id", client_id.as_str()),
         ("redirect_uri", redirect_uri.as_str()),
         ("access_type", "offline"),
-        ("prompt", "consent"),
         ("state", state),
         ("scope", scopes.as_str()),
         ("code_challenge", code_challenge.as_str()),
         ("code_challenge_method", code_challenge_method.as_str()),
     ];
+
+    // Only force a consent re-prompt when explicitly configured; otherwise omit
+    // `prompt` so the provider can silently reuse an existing SSO session.
+    if *prompt_consent {
+        params.push(("prompt", "consent"));
+    }
 
     if let Some(audience) = audience {
         params.push(("audience", audience.as_str()));
@@ -98,5 +104,38 @@ mod tests {
             .find_map(|(key, value)| (key == "audience").then_some(value.into_owned()));
 
         assert_eq!(audience.as_deref(), Some("https://api.example.com"));
+    }
+
+    fn prompt_param(url: &str) -> Option<String> {
+        let url = reqwest::Url::parse(url).expect("auth URL should parse");
+        url.query_pairs()
+            .find_map(|(key, value)| (key == "prompt").then_some(value.into_owned()))
+    }
+
+    #[test]
+    fn create_auth_request_omits_prompt_by_default() {
+        let configuration = create_test_config();
+        let method: Method = configuration.code_challenge_method.to_owned().into();
+        let (_, code_challenge) = Code::generate_using(method, Length::MAX).into_pair();
+
+        let url = create_auth_request(&configuration, &code_challenge, "test-state")
+            .expect("auth URL should be valid");
+
+        assert_eq!(prompt_param(&url), None);
+        assert!(url.contains("access_type=offline"));
+    }
+
+    #[test]
+    fn create_auth_request_includes_prompt_when_enabled() {
+        let mut configuration = create_test_config();
+        configuration.prompt_consent = true;
+        let method: Method = configuration.code_challenge_method.to_owned().into();
+        let (_, code_challenge) = Code::generate_using(method, Length::MAX).into_pair();
+
+        let url = create_auth_request(&configuration, &code_challenge, "test-state")
+            .expect("auth URL should be valid");
+
+        assert_eq!(prompt_param(&url).as_deref(), Some("consent"));
+        assert!(url.contains("access_type=offline"));
     }
 }

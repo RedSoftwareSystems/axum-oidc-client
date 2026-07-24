@@ -316,6 +316,13 @@ pub struct OAuthConfiguration {
     /// browser restarts. Set to `true` to omit `Max-Age`/`Expires` entirely,
     /// making it a session cookie that the browser drops when it closes.
     pub session_cookie: bool,
+    /// Whether to send `prompt=consent` on the authorization request.
+    ///
+    /// `false` (default) omits it, allowing silent SSO reuse of an existing
+    /// provider session. Set to `true` to force the provider to re-prompt for
+    /// consent on every authorization request (e.g. to guarantee a fresh
+    /// refresh token).
+    pub prompt_consent: bool,
 }
 
 /// Session cookie key name.
