@@ -311,6 +311,8 @@ impl SqlAuthCache {
             ));
         }
 
+        Self::validate_table_name(&config.table_name)?;
+
         let shutdown_token = CancellationToken::new();
 
         let (pool, cleanup_handle) =
@@ -359,11 +361,11 @@ impl SqlAuthCache {
                 );
                 let create_index =
                     format!("CREATE INDEX IF NOT EXISTS {index} ON {table} (expires_at)");
-                sqlx::query(&create_table)
+                sqlx::query(sqlx::AssertSqlSafe(create_table))
                     .execute(pool)
                     .await
                     .map_err(|e| Error::CacheError(e.to_string()))?;
-                sqlx::query(&create_index)
+                sqlx::query(sqlx::AssertSqlSafe(create_index))
                     .execute(pool)
                     .await
                     .map_err(|e| Error::CacheError(e.to_string()))?;
@@ -380,12 +382,14 @@ impl SqlAuthCache {
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
                 );
                 let create_index = format!("CREATE INDEX {index} ON {table} (expires_at)");
-                sqlx::query(&create_table)
+                sqlx::query(sqlx::AssertSqlSafe(create_table))
                     .execute(pool)
                     .await
                     .map_err(|e| Error::CacheError(e.to_string()))?;
                 // MySQL errors if the index already exists; ignore that error.
-                let _ = sqlx::query(&create_index).execute(pool).await;
+                let _ = sqlx::query(sqlx::AssertSqlSafe(create_index))
+                    .execute(pool)
+                    .await;
             }
 
             #[cfg(feature = "sql-cache-sqlite")]
@@ -399,11 +403,11 @@ impl SqlAuthCache {
                 );
                 let create_index =
                     format!("CREATE INDEX IF NOT EXISTS {index} ON {table} (expires_at)");
-                sqlx::query(&create_table)
+                sqlx::query(sqlx::AssertSqlSafe(create_table))
                     .execute(pool)
                     .await
                     .map_err(|e| Error::CacheError(e.to_string()))?;
-                sqlx::query(&create_index)
+                sqlx::query(sqlx::AssertSqlSafe(create_index))
                     .execute(pool)
                     .await
                     .map_err(|e| Error::CacheError(e.to_string()))?;
@@ -426,6 +430,26 @@ impl SqlAuthCache {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// Rejects table names that are not plain SQL identifiers (the audit
+    /// justifying the `sqlx::AssertSqlSafe` wraps).
+    fn validate_table_name(table: &str) -> Result<(), Error> {
+        let starts_ok = table
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+        let chars_ok = table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+
+        if table.len() <= 63 && starts_ok && chars_ok {
+            Ok(())
+        } else {
+            Err(Error::CacheError(format!(
+                "SqlCacheConfig.table_name must be a plain SQL identifier \
+                 (ASCII letters, digits, or underscores; at most 63 characters; \
+                 not starting with a digit), got: '{table}'"
+            )))
+        }
+    }
 
     /// Returns the current Unix timestamp in seconds.
     #[inline]
@@ -550,19 +574,20 @@ impl AuthCache for SqlAuthCache {
             match pool.as_ref() {
                 #[cfg(feature = "sql-cache-postgres")]
                 Pool::Postgres(pool) => {
-                    let row: Option<(String,)> = sqlx::query_as(&queries::select_query(&table))
-                        .bind(&key)
-                        .bind(now)
-                        .fetch_optional(pool)
-                        .await
-                        .map_err(|e| Error::CacheError(e.to_string()))?;
+                    let row: Option<(String,)> =
+                        sqlx::query_as(sqlx::AssertSqlSafe(queries::select_query(&table)))
+                            .bind(&key)
+                            .bind(now)
+                            .fetch_optional(pool)
+                            .await
+                            .map_err(|e| Error::CacheError(e.to_string()))?;
                     Ok(row.map(|(v,)| v))
                 }
 
                 #[cfg(feature = "sql-cache-mysql")]
                 Pool::MySql(pool) => {
                     let row: Option<(String,)> =
-                        sqlx::query_as(&queries::mysql_select_query(&table))
+                        sqlx::query_as(sqlx::AssertSqlSafe(queries::mysql_select_query(&table)))
                             .bind(&key)
                             .bind(now)
                             .fetch_optional(pool)
@@ -574,7 +599,7 @@ impl AuthCache for SqlAuthCache {
                 #[cfg(feature = "sql-cache-sqlite")]
                 Pool::Sqlite(pool) => {
                     let row: Option<(String,)> =
-                        sqlx::query_as(&queries::sqlite_select_query(&table))
+                        sqlx::query_as(sqlx::AssertSqlSafe(queries::sqlite_select_query(&table)))
                             .bind(&key)
                             .bind(now)
                             .fetch_optional(pool)
@@ -601,7 +626,7 @@ impl AuthCache for SqlAuthCache {
             match pool.as_ref() {
                 #[cfg(feature = "sql-cache-postgres")]
                 Pool::Postgres(pool) => {
-                    sqlx::query(&queries::postgres_upsert_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::postgres_upsert_query(&table)))
                         .bind(&key)
                         .bind(&value)
                         .bind(expires_at)
@@ -612,7 +637,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-mysql")]
                 Pool::MySql(pool) => {
-                    sqlx::query(&queries::mysql_upsert_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::mysql_upsert_query(&table)))
                         .bind(&key)
                         .bind(&value)
                         .bind(expires_at)
@@ -623,7 +648,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-sqlite")]
                 Pool::Sqlite(pool) => {
-                    sqlx::query(&queries::sqlite_upsert_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::sqlite_upsert_query(&table)))
                         .bind(&key)
                         .bind(&value)
                         .bind(expires_at)
@@ -645,7 +670,7 @@ impl AuthCache for SqlAuthCache {
             match pool.as_ref() {
                 #[cfg(feature = "sql-cache-postgres")]
                 Pool::Postgres(pool) => {
-                    sqlx::query(&queries::delete_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::delete_query(&table)))
                         .bind(&key)
                         .execute(pool)
                         .await
@@ -654,7 +679,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-mysql")]
                 Pool::MySql(pool) => {
-                    sqlx::query(&queries::mysql_delete_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::mysql_delete_query(&table)))
                         .bind(&key)
                         .execute(pool)
                         .await
@@ -663,7 +688,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-sqlite")]
                 Pool::Sqlite(pool) => {
-                    sqlx::query(&queries::sqlite_delete_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::sqlite_delete_query(&table)))
                         .bind(&key)
                         .execute(pool)
                         .await
@@ -690,19 +715,20 @@ impl AuthCache for SqlAuthCache {
             let json: Option<String> = match pool.as_ref() {
                 #[cfg(feature = "sql-cache-postgres")]
                 Pool::Postgres(pool) => {
-                    let row: Option<(String,)> = sqlx::query_as(&queries::select_query(&table))
-                        .bind(&key)
-                        .bind(now)
-                        .fetch_optional(pool)
-                        .await
-                        .map_err(|e| Error::CacheError(e.to_string()))?;
+                    let row: Option<(String,)> =
+                        sqlx::query_as(sqlx::AssertSqlSafe(queries::select_query(&table)))
+                            .bind(&key)
+                            .bind(now)
+                            .fetch_optional(pool)
+                            .await
+                            .map_err(|e| Error::CacheError(e.to_string()))?;
                     row.map(|(v,)| v)
                 }
 
                 #[cfg(feature = "sql-cache-mysql")]
                 Pool::MySql(pool) => {
                     let row: Option<(String,)> =
-                        sqlx::query_as(&queries::mysql_select_query(&table))
+                        sqlx::query_as(sqlx::AssertSqlSafe(queries::mysql_select_query(&table)))
                             .bind(&key)
                             .bind(now)
                             .fetch_optional(pool)
@@ -714,7 +740,7 @@ impl AuthCache for SqlAuthCache {
                 #[cfg(feature = "sql-cache-sqlite")]
                 Pool::Sqlite(pool) => {
                     let row: Option<(String,)> =
-                        sqlx::query_as(&queries::sqlite_select_query(&table))
+                        sqlx::query_as(sqlx::AssertSqlSafe(queries::sqlite_select_query(&table)))
                             .bind(&key)
                             .bind(now)
                             .fetch_optional(pool)
@@ -759,7 +785,7 @@ impl AuthCache for SqlAuthCache {
             match pool.as_ref() {
                 #[cfg(feature = "sql-cache-postgres")]
                 Pool::Postgres(pool) => {
-                    sqlx::query(&queries::postgres_upsert_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::postgres_upsert_query(&table)))
                         .bind(&key)
                         .bind(&value)
                         .bind(expires_at)
@@ -770,7 +796,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-mysql")]
                 Pool::MySql(pool) => {
-                    sqlx::query(&queries::mysql_upsert_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::mysql_upsert_query(&table)))
                         .bind(&key)
                         .bind(&value)
                         .bind(expires_at)
@@ -781,7 +807,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-sqlite")]
                 Pool::Sqlite(pool) => {
-                    sqlx::query(&queries::sqlite_upsert_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::sqlite_upsert_query(&table)))
                         .bind(&key)
                         .bind(&value)
                         .bind(expires_at)
@@ -803,7 +829,7 @@ impl AuthCache for SqlAuthCache {
             match pool.as_ref() {
                 #[cfg(feature = "sql-cache-postgres")]
                 Pool::Postgres(pool) => {
-                    sqlx::query(&queries::delete_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::delete_query(&table)))
                         .bind(&key)
                         .execute(pool)
                         .await
@@ -812,7 +838,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-mysql")]
                 Pool::MySql(pool) => {
-                    sqlx::query(&queries::mysql_delete_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::mysql_delete_query(&table)))
                         .bind(&key)
                         .execute(pool)
                         .await
@@ -821,7 +847,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-sqlite")]
                 Pool::Sqlite(pool) => {
-                    sqlx::query(&queries::sqlite_delete_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::sqlite_delete_query(&table)))
                         .bind(&key)
                         .execute(pool)
                         .await
@@ -842,7 +868,7 @@ impl AuthCache for SqlAuthCache {
             match pool.as_ref() {
                 #[cfg(feature = "sql-cache-postgres")]
                 Pool::Postgres(pool) => {
-                    sqlx::query(&queries::extend_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::extend_query(&table)))
                         .bind(new_expires_at)
                         .bind(&key)
                         .execute(pool)
@@ -852,7 +878,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-mysql")]
                 Pool::MySql(pool) => {
-                    sqlx::query(&queries::mysql_extend_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::mysql_extend_query(&table)))
                         .bind(new_expires_at)
                         .bind(&key)
                         .execute(pool)
@@ -862,7 +888,7 @@ impl AuthCache for SqlAuthCache {
 
                 #[cfg(feature = "sql-cache-sqlite")]
                 Pool::Sqlite(pool) => {
-                    sqlx::query(&queries::sqlite_extend_query(&table))
+                    sqlx::query(sqlx::AssertSqlSafe(queries::sqlite_extend_query(&table)))
                         .bind(new_expires_at)
                         .bind(&key)
                         .execute(pool)
@@ -906,6 +932,24 @@ mod tests {
     #[test]
     fn now_timestamp_is_positive() {
         assert!(SqlAuthCache::now_timestamp() > 0);
+    }
+
+    #[test]
+    fn validate_table_name_accepts_plain_identifiers() {
+        assert!(SqlAuthCache::validate_table_name("oidc_cache").is_ok());
+        assert!(SqlAuthCache::validate_table_name("MyCache1").is_ok());
+        assert!(SqlAuthCache::validate_table_name("_cache").is_ok());
+    }
+
+    #[test]
+    fn validate_table_name_rejects_injection_attempts() {
+        assert!(SqlAuthCache::validate_table_name("").is_err());
+        assert!(SqlAuthCache::validate_table_name("1cache").is_err());
+        assert!(SqlAuthCache::validate_table_name("cache; DROP TABLE users").is_err());
+        assert!(SqlAuthCache::validate_table_name("cache\"").is_err());
+        assert!(SqlAuthCache::validate_table_name("public.cache").is_err());
+        assert!(SqlAuthCache::validate_table_name("oidc-cache").is_err());
+        assert!(SqlAuthCache::validate_table_name(&"a".repeat(64)).is_err());
     }
 
     #[test]

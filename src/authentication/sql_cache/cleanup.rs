@@ -134,7 +134,7 @@ pub(super) fn spawn_postgres(
             let now = chrono::Utc::now().timestamp();
 
             loop {
-                match sqlx::query(&query_str)
+                match sqlx::query(sqlx::AssertSqlSafe(query_str.as_str()))
                     .bind(now)
                     .bind(CLEANUP_BATCH_SIZE)
                     .execute(&pool)
@@ -187,7 +187,7 @@ pub(super) fn spawn_mysql(
             let now = chrono::Utc::now().timestamp();
 
             loop {
-                match sqlx::query(&query_str)
+                match sqlx::query(sqlx::AssertSqlSafe(query_str.as_str()))
                     .bind(now)
                     .bind(CLEANUP_BATCH_SIZE)
                     .execute(&pool)
@@ -240,7 +240,7 @@ pub(super) fn spawn_sqlite(
             let now = chrono::Utc::now().timestamp();
 
             loop {
-                match sqlx::query(&query_str)
+                match sqlx::query(sqlx::AssertSqlSafe(query_str.as_str()))
                     .bind(now)
                     .bind(CLEANUP_BATCH_SIZE)
                     .execute(&pool)
